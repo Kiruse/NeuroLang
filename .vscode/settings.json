@@ -1,0 +1,32 @@
+{
+    "cmake.configureOnOpen": true,
+    "cmake.preferredGenerators": [
+        "Visual Studio 15 2017",
+        "Visual Studio 14 2015",
+        "Ninja",
+        "Unix Makefiles"
+    ],
+    "C_Cpp.default.configurationProvider": "vector-of-bool.cmake-tools",
+    "C_Cpp.configurationWarnings": "Disabled",
+    "files.associations": {
+        "xiosbase": "cpp",
+        "iosfwd": "cpp",
+        "streambuf": "cpp",
+        "xutility": "cpp",
+        "xlocale": "cpp",
+        "xstring": "cpp",
+        "utility": "cpp",
+        "iostream": "cpp",
+        "ios": "cpp",
+        "system_error": "cpp",
+        "xmemory0": "cpp",
+        "type_traits": "cpp",
+        "cstddef": "c",
+        "vector": "cpp",
+        "initializer_list": "cpp",
+        "xtree": "cpp",
+        "tuple": "cpp"
+    },
+    "editor.trimAutoWhitespace": false,
+    "editor.rulers": [80, 120]
+}
