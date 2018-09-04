@@ -48,4 +48,9 @@ namespace Neuro
         }
         return result;
     }
+    
+    /** Alternative to Neuro::String, which simply wraps the c-string in a temporary Neuro::String and calculates the hashcode thereof. */
+    inline hashT calculateHash(const char* string) {
+        return calculateHash(String(string));
+    }
 }

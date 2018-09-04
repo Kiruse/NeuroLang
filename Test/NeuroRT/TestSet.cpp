@@ -45,7 +45,7 @@ void TestNeuroSet() {
             NEURO_ASSERT_EXPR(set.capacity()) == 0;
         });
         
-        test("Add", [](){
+        test("Basic Add", [](){
             StandardHashSet<int> set(8);
             for (int i = 0; i < 16; ++i) {
                 set.add(i);

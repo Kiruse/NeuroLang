@@ -9,4 +9,6 @@ int main(int argc, char* argv[]) {
     TestNeuroBuffer();
     TestNeuroString();
     TestNeuroSet();
+    TestNeuroMaybe();
+    TestNeuroMap();
 }

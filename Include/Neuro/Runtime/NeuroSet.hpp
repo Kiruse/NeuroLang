@@ -16,6 +16,7 @@
 
 #include "Allocator.hpp"
 #include "Assert.hpp"
+#include "DLLDecl.h"
 #include "HashCode.hpp"
 #include "NeuroBuffer.hpp"
 #include "Numeric.hpp"
@@ -24,7 +25,7 @@
 namespace Neuro
 {
     /** Trivial identifier for a single element in the hash set. Valid as long as the associated hash set doesn't change. */
-    struct StandardHashSetElementIdentifier {
+    struct NEURO_API StandardHashSetElementIdentifier {
         uint32 bucketIndex;
         uint32 indexInBucket;
         StandardHashSetElementIdentifier() = default;
@@ -37,8 +38,11 @@ namespace Neuro
         bool operator!=(const StandardHashSetElementIdentifier& other) const { return !(*this==other); }
     };
     
-    template<typename T, bool (*Comparator)(const T&, const T&), typename Allocator = AutoHeapAllocator<T>>
-    class StandardHashSetBucket {
+    template<typename T,
+             bool (*Comparator)(const T&, const T&),
+             typename Allocator = AutoHeapAllocator<T>
+            >
+    class NEURO_API StandardHashSetBucket {
         Buffer<T, Allocator> buffer;
         hashT m_hashcode;
         
@@ -46,9 +50,7 @@ namespace Neuro
         StandardHashSetBucket(uint32 hashcode, uint32 size = 1, uint32 expand = 1) : buffer(size, expand), m_hashcode(hashcode) {}
         
         void add(const T& elem) {
-            if (find(elem) == npos) {
-                buffer.add(elem);
-            }
+            buffer.add(elem);
         }
         
         void remove(const T& elem) {
@@ -82,6 +84,9 @@ namespace Neuro
             return buffer[index];
         }
         
+        T& last() { return buffer.last(); }
+        const T& last() const { return buffer.last(); }
+        
         const hashT hashcode() const { return m_hashcode; }
         
         const uint32 length() const { return buffer.length(); }
@@ -98,8 +103,14 @@ namespace Neuro
      * The Comparator tests for equality of the data, and is used to distinguish
      * elements within the same bucket.
      */
-    template<typename T, bool (*Comparator)(const T&, const T&) = is::equal, uint32 (*Hasher)(const T&) = calculateHash, typename BucketT = StandardHashSetBucket<T, Comparator, AutoHeapAllocator<T>>, typename Allocator = RawHeapAllocator<BucketT>>
-    class StandardHashSet {
+    template<typename T,
+             bool (*Comparator)(const T&, const T&) = is::equal,
+             hashT (*Hasher)(const T&) = calculateHash,
+             typename BucketT = StandardHashSetBucket<T, Comparator, AutoHeapAllocator<T>>,
+             typename Allocator = RawHeapAllocator<BucketT>
+            >
+    class NEURO_API StandardHashSet
+    {
         Buffer<BucketT, Allocator> buckets;
         
     public:
@@ -207,7 +218,7 @@ namespace Neuro
         
         StandardHashSet& add(const T& elem) {
             BucketT& bucket = getOrCreateBucket(Hasher(elem));
-            bucket.add(elem);
+			if (bucket.find(elem) == npos) bucket.add(elem);
             return *this;
         }
         StandardHashSet& add(const std::initializer_list<T>& list) { return add(list.begin(), list.end()); }
@@ -493,7 +504,7 @@ namespace Neuro
      * buckets are valid and which are not.
      */
     template<typename T>
-    struct FastHashSetElementWrapper {
+    struct NEURO_API FastHashSetElementWrapper {
         bool valid;
         T value;
     };
@@ -519,7 +530,7 @@ namespace Neuro
      * Oh, and also: TODO.
      */
     template<typename T, bool (*Comparator)(const T&, const T&), uint32 (*Hasher)(const T&)>
-    struct FastHashSet {
+    struct NEURO_API FastHashSet {
         AutoHeapAllocator<FastHashSetElementWrapper<T>> alloc;
         
     };
