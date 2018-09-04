@@ -39,6 +39,7 @@
 #include <initializer_list>
 #include <utility>
 #include "Allocator.hpp"
+#include "Misc.hpp"
 #include "Numeric.hpp"
 
 
@@ -264,11 +265,94 @@ namespace Neuro
             return *this;
         }
         
+        /**
+         * Removes the first instance of the given element within the specified
+         * range.
+         */
+        template<bool (*Comparator)(const T&, const T&) = is::equal<T>>
+        Buffer& remove(const T& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 index = find<Comparator>(elem, leftOffset, rightOffset);
+            if (index != npos) {
+                splice(index);
+            }
+            return *this;
+        }
+        
+        /**
+         * Removes all instances of the given element within the specified
+         * range.
+         */
+        template<bool (*Comparator)(const T&, const T&) = is::equal<T>>
+        Buffer& removeAll(const T& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 index = find<Comparator>(elem, leftOffset, rightOffset);
+            while (index != npos) {
+                splice(index);
+                index = find<Comparator>(elem, leftOffset + index, rightOffset);
+            }
+            return *this;
+        }
+        
         virtual Buffer& clear() {
             // Destory everything and reset length to 0.
             internal_destroy(0, m_length);
             m_length = 0;
             return *this;
+        }
+        
+        /**
+         * Attempts to find the first instance of the given element within the
+         * specified range and returns its index. If none found, returns npos.
+         */
+        template<bool (*Comparator)(const T&, const T&) = is::equal<T>>
+        uint32 find(const T& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+            convertOffsets(leftOffset, rightOffset);
+            
+            for (uint32 i = leftOffset; i < rightOffset; ++i) {
+                if (Comparator(get(i), elem)) return i;
+            }
+            return npos;
+        }
+        
+        /**
+         * Finds the last instance of the given element in the specified range
+         * and returns its index. If none found, returns npos.
+         */
+        template<bool (*Comparator)(const T&, const T&) = is::equal<T>>
+        uint32 findLast(const T& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+            convertOffsets(leftOffset, rightOffset);
+            
+            for (uint32 i = rightOffset - 1; i >= leftOffset && i != npos; --i) {
+                if (Comparator(get(i), elem)) return i;
+            }
+            return npos;
+        }
+        
+        /**
+         * Attempts to find the first element that matches the specified predicate
+         * and returns its index. If none found, returns npos.
+         */
+        template<typename Predicate>
+        uint32 findByPredicate(const Predicate& pred, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+            convertOffsets(leftOffset, rightOffset);
+            
+            for (uint32 i = leftOffset; i < rightOffset; ++i) {
+                if (pred(get(i))) return i;
+            }
+            return npos;
+        }
+        
+        /**
+         * Attempts to find the last element that matches the specified predicate
+         * and returns its index. If none found, returns npos.
+         */
+        template<typename Predicate>
+        uint32 findLastByPredicate(const Predicate& pred, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+            convertOffsets(leftOffset, rightOffset);
+            
+            for (uint32 i = rightOffset - 1; i >= leftOffset && i != npos; --i) {
+                if (pred(get(i))) return i;
+            }
+            return npos;
         }
         
         virtual uint32 length() const { return m_length; }
@@ -298,6 +382,26 @@ namespace Neuro
         virtual T* end() { return alloc.data() + m_length; }
         virtual const T* end() const { return cend(); }
         virtual const T* cend() const { return alloc.data() + m_length; }
+        
+    protected:
+        /**
+         * Ensures the specified left and right offsets are valid within the
+         * valid range of the underlying memory buffer.
+         */
+        void sanitizeOffsets(uint32& leftOffset, uint32& rightOffset) const {
+            leftOffset = std::min(leftOffset, m_length);
+            rightOffset = std::min(rightOffset, m_length);
+        }
+        
+        /**
+         * Ensures the specified left and right offsets are valid within the
+         * valid range of the underlying memory buffer and converts them into
+         * absolute indices with respect to the beginning of the buffer.
+         */
+        void convertOffsets(uint32& leftOffset, uint32& rightOffset) const {
+            sanitizeOffsets(leftOffset, rightOffset);
+            rightOffset = m_length - rightOffset;
+        }
         
     private:
         // A dummy type used so we can avoid additional meta types for every

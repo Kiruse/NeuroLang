@@ -25,7 +25,8 @@
         "vector": "cpp",
         "initializer_list": "cpp",
         "xtree": "cpp",
-        "tuple": "cpp"
+        "tuple": "cpp",
+        "algorithm": "cpp"
     },
     "editor.trimAutoWhitespace": false,
     "editor.rulers": [80, 120]

@@ -167,6 +167,30 @@ void TestNeuroBuffer() {
             Assert::Value(buffer) == ref;
         });
         
+        section("Find", [](){
+            Buffer<int> buffer {1, 2, 4, 8, 16};
+            
+            test("first in entire range", [&buffer](){
+                uint32 index = buffer.find(4);
+                NEURO_ASSERT_EXPR(index) == 2;
+            });
+            
+            test("last in entire range", [&buffer](){
+                uint32 index = buffer.findLast(8);
+                NEURO_ASSERT_EXPR(index) == 3;
+            });
+            
+            test("first in subrange", [&buffer](){
+                uint32 index = buffer.find(2, 2);
+                NEURO_ASSERT_EXPR(index) == npos;
+            });
+            
+            test("last in subrange", [&buffer](){
+                uint32 index = buffer.findLast(16, 0, 1);
+                NEURO_ASSERT_EXPR(index) == npos;
+            });
+        });
+        
         test("Merge", [](){
             Buffer<int> buffer {1, 2, 3}, other {3, 4}, ref {1, 2, 3, 3, 4};
             buffer.merge(other);
@@ -281,6 +305,38 @@ void TestNeuroBuffer() {
             Buff buffer {1, 2, 3, 4}, ref {1, 2, 3};
             buffer.drop();
             Assert::Value(buffer) == ref;
+        });
+        
+        section("Find", [](){
+            Buff buffer {1, 2, 4, 8, 16};
+            
+            test("first in entire range", [&buffer](){
+                uint32 index = buffer.findByPredicate([](const TestClass& curr) {
+                    return curr.value == 4;
+                });
+                NEURO_ASSERT_EXPR(index) == 2;
+            });
+            
+            test("last in entire range", [&buffer](){
+                uint32 index = buffer.findLastByPredicate([](const TestClass& curr) {
+                    return curr.value == 8;
+                });
+                NEURO_ASSERT_EXPR(index) == 3;
+            });
+            
+            test("first in subrange", [&buffer](){
+                uint32 index = buffer.findByPredicate([](const TestClass& curr) {
+                    return curr.value == 2;
+                }, 2);
+                NEURO_ASSERT_EXPR(index) == npos;
+            });
+            
+            test("last in subrange", [&buffer](){
+                uint32 index = buffer.findLastByPredicate([](const TestClass& curr) {
+                    return curr.value == 16;
+                }, 0, 1);
+                NEURO_ASSERT_EXPR(index) == npos;
+            });
         });
         
         test("Merge", [](){

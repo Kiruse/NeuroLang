@@ -14,10 +14,10 @@
 namespace Neuro
 {
     template<typename CharT>
-    NEURO_API std::size_t strlen(const CharT* str, std::size_t maxLen = 65536) {
+    NEURO_API uint32 strlen(const CharT* str, uint32 maxLen = 65536) {
         if (!str) return npos;
         const CharT* curr = str;
-        std::size_t iteration = 0;
+        uint32 iteration = 0;
         while (*(curr++) != 0) {
             if (++iteration >= maxLen) return npos;
         }
@@ -36,12 +36,12 @@ namespace Neuro
         StringBase(const CharT* init) : Buffer(strlen(init)) {
             add(init);
         }
-        StringBase(std::size_t size) : Buffer(size) {}
+        StringBase(uint32 size) : Buffer(size) {}
         StringBase(const StringBase&) = default;
         StringBase& operator=(const StringBase&) = default;
         StringBase& operator=(const CharT* raw) {
             clear();
-            const std::size_t length = strlen(raw);
+            const uint32 length = strlen(raw);
             if (length) {
                 add(raw);
             }
@@ -49,23 +49,23 @@ namespace Neuro
         }
         ~StringBase() = default;
         
-        StringBase& insert(std::size_t before, const CharT& singleChar) {
+        StringBase& insert(uint32 before, const CharT& singleChar) {
             Base::insert(before, singleChar);
             return *this;
         }
-        StringBase& insert(std::size_t before, const CharT* raw) {
+        StringBase& insert(uint32 before, const CharT* raw) {
             const auto rawlen = strlen(raw);
             if (rawlen != npos) {
                 Base::insert(before, raw, raw + rawlen);
             }
             return *this;
         }
-        StringBase& insert(std::size_t before, const StringBase& what) {
+        StringBase& insert(uint32 before, const StringBase& what) {
             Base::insert(before, what);
             return *this;
         }
         template<typename Iterator>
-        StringBase& insert(std::size_t before, const Iterator& begin, const Iterator& end) {
+        StringBase& insert(uint32 before, const Iterator& begin, const Iterator& end) {
             Base::insert(before, begin, end);
             return *this;
         }
@@ -101,50 +101,53 @@ namespace Neuro
             return *this;
         }
         
-        std::size_t find(const CharT& what, std::size_t leftOffset = 0, std::size_t rightOffset = 0) const {
-            for (std::size_t i = leftOffset, end = length() - std::min(rightOffset, length()); i < end; ++i) {
-                if (get(i) == what) return i;
-            }
-            return npos;
+        template<bool (*Comparator)(const CharT&, const CharT&) = is::equal<CharT>>
+        uint32 find(const CharT& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+			return Buffer::find(elem, leftOffset, rightOffset);
         }
-        std::size_t find(const StringBase& what, std::size_t leftOffset = 0, std::size_t rightOffset = 0) const {
-            for (std::size_t i = leftOffset, end = length() - std::min(rightOffset, length()); i < end; ++i) {
-                bool found = true;
-                for (std::size_t j = 0; found && j < what.length(); ++j) {
-                    found = get(i + j) == what[j];
+        
+        template<bool (*Comparator)(const CharT&, const CharT&) = is::equal<CharT>>
+        uint32 find(const StringBase& what, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+			rightOffset = std::max(rightOffset, what.length() - 1); // length - 1 for the special case where *this == what
+			convertOffsets(leftOffset, rightOffset);
+
+            for (uint32 i = leftOffset; i < rightOffset; ++i) {
+                bool found = Comparator(get(i), what[0]);
+                for (uint32 j = 0; found && j < what.length() && j < length(); ++j) {
+                    found = Comparator(get(i + j), what[j]);
                 }
                 if (found) return i;
             }
             return npos;
         }
-        std::size_t findLast(const CharT& what, std::size_t leftOffset = 0, std::size_t rightOffset = 0) const {
-            if (rightOffset + 1 < length()) {
-                for (std::size_t i = length() - rightOffset - 1; i >= leftOffset; --i) {
-                    if (get(i) == what) return i;
-                }
-            }
-            return npos;
+        
+        template<bool (*Comparator)(const CharT&, const CharT&) = is::equal<CharT>>
+        uint32 findLast(const CharT& elem, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+			return Buffer::findLast(elem, leftOffset, rightOffset);
         }
-        std::size_t findLast(const StringBase& what, std::size_t leftOffset = 0, std::size_t rightOffset = 0) const {
-            if (rightOffset + 1 < length()) {
-                for (std::size_t i = length() - rightOffset - 1; i >= leftOffset; --i) {
-                    bool found = true;
-                    for (std::size_t j = 0; found && j < what.length(); ++j) {
-                        found = get(i + j) == what[j];
-                    }
-                    if (found) return i;
-                }
-            }
-            return npos;
+        
+        template<bool (*Comparator)(const CharT&, const CharT&) = is::equal<CharT>>
+        uint32 findLast(const StringBase& what, uint32 leftOffset = 0, uint32 rightOffset = 0) const {
+			rightOffset = std::max(rightOffset, what.length() - 1); // length - 1 for the special case where *this == what
+			convertOffsets(leftOffset, rightOffset);
+
+			for (uint32 i = rightOffset - 1; i >= leftOffset && i != npos; --i) {
+				bool found = Comparator(get(i), what[0]);
+				for (uint32 j = 0; found && j < what.length(); ++j) { // No need to test j < length() because we're moving away from the end anyway.
+					found = Comparator(get(i + j), what[j]);
+				}
+				if (found) return i;
+			}
+			return npos;
         }
         
         template<typename Predicate>
-        std::size_t findByPredicate(const Predicate& pred) {
+        uint32 findByPredicate(const Predicate& pred) {
             return findByPredicate(0, pred);
         }
         template<typename Predicate>
-        std::size_t findByPredicate(std::size_t offset, const Predicate& pred) {
-            for (std::size_t i = 0; i < length(); ++i) {
+        uint32 findByPredicate(uint32 offset, const Predicate& pred) {
+            for (uint32 i = 0; i < length(); ++i) {
                 if (pred(*this, i, get(i))) return true;
             }
             return npos;
@@ -153,53 +156,53 @@ namespace Neuro
         bool contains(CharT character) const { return find(character) != npos; }
         bool contains(const StringBase& what) const { return find(what) != npos; }
         
-        StringBase& replace(CharT character, CharT replacer, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = find(character, leftOffset, rightOffset);
+        StringBase& replace(CharT character, CharT replacer, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = find(character, leftOffset, rightOffset);
             if (pos != npos) get(pos) = replacer;
             return *this;
         }
-        StringBase& replaceAll(CharT character, CharT replacer, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = find(character, leftOffset, rightOffset);
+        StringBase& replaceAll(CharT character, CharT replacer, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = find(character, leftOffset, rightOffset);
             while (pos != npos) {
                 get(pos) = replacer;
                 pos = find(character, leftOffset + pos + 1, rightOffset);
             }
             return *this;
         }
-        StringBase& replaceLast(CharT character, CharT replacer, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = findLast(character, leftOffset, rightOffset);
+        StringBase& replaceLast(CharT character, CharT replacer, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = findLast(character, leftOffset, rightOffset);
             if (pos != npos) get(pos) = replacer;
             return *this;
         }
-        StringBase& replace(const StringBase& what, const StringBase& with, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = find(what, leftOffset, rightOffset);
+        StringBase& replace(const StringBase& what, const StringBase& with, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = find(what, leftOffset, rightOffset);
             if (pos != npos) {
                 replace(pos, pos + what.length(), with);
             }
             return *this;
         }
-        StringBase& replaceAll(const StringBase& what, const StringBase& with, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = find(what, leftOffset, rightOffset);
+        StringBase& replaceAll(const StringBase& what, const StringBase& with, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = find(what, leftOffset, rightOffset);
             while (pos != npos) {
                 replace(pos, pos + what.length(), with);
                 pos = find(what, leftOffset + pos, rightOffset);
             }
             return *this;
         }
-        StringBase& replaceLast(const StringBase& what, const StringBase& with, std::size_t leftOffset = 0, std::size_t rightOffset = 0) {
-            std::size_t pos = findLast(what, leftOffset, rightOffset);
+        StringBase& replaceLast(const StringBase& what, const StringBase& with, uint32 leftOffset = 0, uint32 rightOffset = 0) {
+            uint32 pos = findLast(what, leftOffset, rightOffset);
             if (pos != npos) {
                 replace(pos, pos + what.length(), with);
             }
             return *this;
         }
-        StringBase& replace(std::size_t from, std::size_t to, const StringBase& with) {
+        StringBase& replace(uint32 from, uint32 to, const StringBase& with) {
             if (from > to) return *this;
             to = std::min(to, length());
             
-            std::size_t replaceLength = to - from;
+            uint32 replaceLength = to - from;
             if (with.length() > replaceLength) {
-                const std::size_t diff = with.length() - replaceLength;
+                const uint32 diff = with.length() - replaceLength;
                 if (length() + diff > size()) {
                     fit(length() + diff);
                 }
@@ -208,7 +211,7 @@ namespace Neuro
             }
             else if (with.length() < replaceLength) {
                 splice(from, replaceLength - with.length());
-                for (std::size_t i = length(); i < size(); ++i) {
+                for (uint32 i = length(); i < size(); ++i) {
                     get(i) = 0;
                 }
             }
@@ -217,10 +220,10 @@ namespace Neuro
             return *this;
         }
         
-        StringBase substr(std::size_t start, std::size_t count = npos) const {
+        StringBase substr(uint32 start, uint32 count = npos) const {
             if (start >= length()) return StringBase();
             
-            std::size_t end = count != npos ? std::min(length(), start + count) : length();
+            uint32 end = count != npos ? std::min(length(), start + count) : length();
             
             StringBase result(end - start);
             result.add(data() + start, data() + end);
@@ -253,7 +256,7 @@ namespace Neuro
         
         bool operator==(const StringBase& other) const {
             if (length() != other.length()) return false;
-            for (std::size_t i = 0; i < length(); ++i) {
+            for (uint32 i = 0; i < length(); ++i) {
                 if (get(i) != other[i]) return false;
             }
             return true;
@@ -261,9 +264,9 @@ namespace Neuro
         bool operator!=(const StringBase& other) const { return !(*this == other); }
         
         bool operator==(const CharT* raw) const {
-            const std::size_t rawlen = strlen(raw);
+            const uint32 rawlen = strlen(raw);
             if (rawlen != length()) return false;
-            for (std::size_t i = 0; i < rawlen; ++i) {
+            for (uint32 i = 0; i < rawlen; ++i) {
                 if (get(i) != raw[i]) return false;
             }
             return true;
@@ -279,12 +282,12 @@ namespace Neuro
         typedef StringBase<CharT, StringAlloc> String;
         
         Buffer<String, BufferAlloc> result;
-        std::size_t pos = source.find(delim);
+        uint32 pos = source.find(delim);
         if (pos == npos) {
             result.add(source);
         }
         else {
-            std::size_t prev = 0; // -1 so in the first iteration -1 + 1 == 0.
+            uint32 prev = 0; // -1 so in the first iteration -1 + 1 == 0.
             do {
                 result.add(source.substr(prev, pos - prev));
                 prev = pos + 1;
