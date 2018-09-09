@@ -46,13 +46,20 @@
 namespace Neuro
 {
     template<typename T, typename Allocator = AutoHeapAllocator<T>>
-    class Buffer {
+    class NEURO_API Buffer {
         template<typename U, typename OtherAlloc> friend class Buffer;
         
     protected:
         Allocator alloc;
         uint32 m_length;
         uint32 m_expand;
+        
+    protected:
+        /**
+         * Special constructor for subclasses, allowing them to pass in a custom
+         * constructed allocator. Used in the Garbage Collector.
+         */
+        Buffer(Allocator&& alloc, uint32 expand = 8) : alloc(std::move(alloc)), m_length(0), m_expand(expand) {}
         
     public:
         Buffer(uint32 size = 8, uint32 expand = 8) : alloc(size), m_length(0), m_expand(expand) {}
@@ -133,7 +140,7 @@ namespace Neuro
          */
         template<typename... Args>
         auto addNew(Args... args)
-         -> decltype(alloc.create(m_length, args...), *this)
+         -> decltype(alloc.create(m_length, 1, args...), *this)
         {
             if (m_length + 1 > size()) {
                 alloc.resize(size() + m_expand);
@@ -175,12 +182,12 @@ namespace Neuro
         
         template<typename... Args>
         auto insertNew(uint32 before, Args... args)
-         -> decltype(alloc.create(0, args...), *this)
+         -> decltype(alloc.create(0, 1, args...), *this)
         {
             if (m_length + 1 > size()) {
                 alloc.resize(size() + m_expand);
             }
-            internal_move(before, before + 1);
+            internal_move(before, before + 1, WorkaroundTag);
             alloc.create(before, 1, args...);
 			++m_length;
             return *this;
@@ -257,7 +264,7 @@ namespace Neuro
                 
                 // Are there even any elements left to move up?
                 if (index + numberOfElements < m_length) {
-                    internal_move(index + numberOfElements, index);
+                    internal_move(index + numberOfElements, index, WorkaroundTag);
                 }
                 
                 m_length -= numberOfElements;
@@ -406,7 +413,7 @@ namespace Neuro
     private:
         // A dummy type used so we can avoid additional meta types for every
         // "optional" allocator method.
-        constexpr static struct FWorkaroundTag {} WorkaroundTag = {};
+        constexpr static struct NEURO_API FWorkaroundTag {} WorkaroundTag = {};
         
         template<typename U = T>
         auto internal_destroy(uint32 index, uint32 count)
@@ -427,16 +434,16 @@ namespace Neuro
          */
         template<typename U = T>
         auto internal_move(uint32 from, uint32 to, FWorkaroundTag)
-         -> decltype(alloc.move(to, alloc.data() + from, (uint32)1), void()) // We don't care about the exact number, just the fact it's uint32.
+         -> decltype(alloc.move(to, from, (uint32)1), void()) // We don't care about the exact number, just the fact it's uint32.
         {
             // No need to consider to, as alloc.move should already restrict that to prevent the buffer from overflowing.
-            alloc.move(to, alloc.data() + from, m_length - from);
+            alloc.move(to, from, m_length - from);
         }
         
         void internal_move(uint32 from, uint32 to, ...) {
             uint32 count = m_length - from;
             // No need to consider to, as alloc.copy should already restrict that to prevent the buffer from overflowing.
-            alloc.copy(to, alloc.data() + from, count);
+            alloc.copy(to, from, count);
             
             // Moving back. Destroy "empty" elements up front.
             // No need to destroy elements at the back, because they're valid anway.

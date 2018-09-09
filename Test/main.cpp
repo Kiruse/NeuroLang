@@ -11,4 +11,5 @@ int main(int argc, char* argv[]) {
     TestNeuroSet();
     TestNeuroMaybe();
     TestNeuroMap();
+    TestNeuroDelegate();
 }

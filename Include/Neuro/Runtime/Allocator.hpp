@@ -113,72 +113,71 @@ namespace Neuro
         T* m_data;
         
         RawHeapAllocator() = default;
-        RawHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(reinterpret_cast<T*>(std::malloc(desiredSize * sizeof(T)))) {}
-        RawHeapAllocator(const RawHeapAllocator& copy) : m_size(copy.m_size), m_data(reinterpret_cast<T*>(std::malloc(copy.m_size * sizeof(T)))) {
-            std::memcpy(m_data, copy.m_data, m_size * sizeof(T));
+        RawHeapAllocator(uint32 desiredSize) : m_data(nullptr) { resize(desiredSize); }
+        RawHeapAllocator(const RawHeapAllocator& other) : m_data(nullptr) {
+            resize(other.m_size);
+            std::memcpy(m_data, other.m_data, m_size * sizeof(T));
         }
-        RawHeapAllocator(RawHeapAllocator&& move) : m_size(move.m_size), m_data(move.m_data) {
-            move.m_data = nullptr;
-            move.m_size = 0;
+        RawHeapAllocator(RawHeapAllocator&& other) : m_size(other.m_size), m_data(other.m_data) {
+            other.m_data = nullptr;
+            other.m_size = 0;
         }
-        RawHeapAllocator& operator=(const RawHeapAllocator& copy) {
-            if (m_data) {
-                m_data = reinterpret_cast<T*>(std::realloc(m_data, copy.m_size * sizeof(T)));
-            }
-            else {
-                m_data = reinterpret_cast<T*>(std::malloc(copy.m_size * sizeof(T)));
-            }
-            if (m_data) {
-                std::memcpy(m_data, copy.m_data, copy.m_size * sizeof(T));
-                m_size = copy.m_size;
-            }
+        RawHeapAllocator& operator=(const RawHeapAllocator& other) {
+            resize(other.m_size);
+            if (m_data) std::memcpy(m_data, other.m_data, other.m_size * sizeof(T));
             return *this;
         }
-        RawHeapAllocator& operator=(RawHeapAllocator&& move) {
-            if (m_data) {
-                std::free(m_data);
-            }
-            m_data = move.m_data;
-            m_size = move.m_size;
-            move.m_data = nullptr;
-            move.m_size = 0;
+        RawHeapAllocator& operator=(RawHeapAllocator&& other) {
+            if (m_data) std::free(m_data);
+            m_data = other.m_data;
+            m_size = other.m_size;
+            other.m_data = nullptr;
+            other.m_size = 0;
             return *this;
         }
         ~RawHeapAllocator() {
-            if (m_data) {
-                std::free(m_data);
-                m_data = nullptr;
-            }
+            if (m_data) std::free(m_data);
+            m_data = nullptr;
+            m_size = 0;
         }
         
         void resize(uint32 desiredSize) {
-            if (desiredSize != m_size) {
-                m_data = reinterpret_cast<T*>(std::realloc(m_data, desiredSize * sizeof(T)));
+            if (desiredSize != m_size || !m_data) {
+                if (m_data) {
+                    m_data = reinterpret_cast<T*>(std::realloc(m_data, desiredSize * sizeof(T)));
+                }
+                else {
+                    m_data = reinterpret_cast<T*>(std::malloc(desiredSize * sizeof(T)));
+                }
                 m_size = desiredSize;
             }
         }
         
         template<typename... Args>
         void create(uint32 index, uint32 count, Args... args) {
-            for (uint32 i = index; i < index + count; ++i) {
-                new (m_data + i) T(std::forward<Args>(args)...);
+            if (m_data) {
+                for (uint32 i = index; i < index + count; ++i) {
+                    new (m_data + i) T(std::forward<Args>(args)...);
+                }
             }
         }
         void copy(uint32 index, const T* source, uint32 count) {
-            std::memcpy(m_data + index, source, std::min(count, m_size - index) * sizeof(T));
+            if (m_data) std::memcpy(m_data + index, source, std::min(count, m_size - index) * sizeof(T));
         }
         void copy(uint32 toIndex, uint32 fromIndex, uint32 count) {
             copy(toIndex, m_data + fromIndex, count);
         }
         void move(uint32 index, T* source, uint32 count) {
-            std::memmove(m_data + index, source, std::min(count, m_size - index) * sizeof(T));
+            if (m_data) std::memmove(m_data + index, source, std::min(count, m_size - index) * sizeof(T));
         }
         void move(uint32 toIndex, uint32 fromIndex, uint32 count) {
             move(toIndex, m_data + fromIndex, count);
         }
         void destroy(uint32 index, uint32 count) {
-            for (uint32 i = index; i < std::min(m_size, index + count); ++i) {
-                m_data[i].~T();
+            if (m_data) {
+                for (uint32 i = index; i < std::min(m_size, index + count); ++i) {
+                    m_data[i].~T();
+                }
             }
         }
         
@@ -207,14 +206,16 @@ namespace Neuro
         
         RAIIHeapAllocator() = default;
         RAIIHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(new T[desiredSize]) {}
-        RAIIHeapAllocator(const RAIIHeapAllocator& other) : m_size(other.m_size), m_data(new T[other.m_size]) {
+        template<typename U = T, typename = std::enable_if_t<std::is_assignable_v<T, const U&>>>
+        RAIIHeapAllocator(const RAIIHeapAllocator<U>& other) : m_size(other.m_size), m_data(new T[other.m_size]) {
             copy(0, other.m_data, m_size);
         }
         RAIIHeapAllocator(RAIIHeapAllocator&& other) : m_size(other.m_size), m_data(other.m_data) {
             other.m_size = 0;
             other.m_data = nullptr;
         }
-        RAIIHeapAllocator& operator=(const RAIIHeapAllocator& other) {
+        template<typename U = T, typename = std::enable_if_t<std::is_assignable_v<T, const U&>>>
+        RAIIHeapAllocator& operator=(const RAIIHeapAllocator<U>& other) {
             delete[] m_data;
             m_size = other.m_size;
             m_data = new T[other.m_size];
@@ -230,78 +231,88 @@ namespace Neuro
             return *this;
         }
         ~RAIIHeapAllocator() {
-            delete[] m_data;
+            if (m_data) delete[] m_data;
             m_size = 0;
             m_data = nullptr;
         }
         
         void resize(uint32 desiredSize) {
-            if (desiredSize != m_size) {
+            if (desiredSize != m_size || !m_data) {
                 T* tmp = m_data;
                 m_data = new T[desiredSize];
-                copy(0, tmp, std::min(desiredSize, m_size));
-                delete[] tmp;
+                if (tmp) {
+                    resize_restore(tmp, std::min(desiredSize, m_size));
+                    delete[] tmp;
+                }
 				m_size = desiredSize;
             }
         }
         
         template<typename U = T>
-        std::enable_if_t<std::is_copy_assignable_v<U>> copy(uint32 index, const T* source, uint32 count) {
-            count = std::min(count, m_size - index);
-            for (uint32 i = 0; i < count; ++i) {
-                m_data[index + i] = source[i];
-            }
-        }
-        template<typename U = T>
-        std::enable_if_t<std::is_copy_assignable_v<U>> copy(uint32 to, uint32 from, uint32 count) {
-            count = std::min(m_size - to, count);
-            count = std::min(m_size - from, count);
-            
-            // Copy backwards!
-            if (from < to && to < from + count) {
-                for (uint32 i = count - 1; i != -1; --i) {
-                    m_data[to + i] = m_data[from + i];
-                }
-            }
-            // Copy forwards!
-            else {
+        std::enable_if_t<std::is_assignable_v<T, const U&>> copy(uint32 index, const U* source, uint32 count) {
+            if (m_data) {
+                count = std::min(count, m_size - index);
                 for (uint32 i = 0; i < count; ++i) {
-                    m_data[to + i] = m_data[from + i];
+                    m_data[index + i] = source[i];
                 }
             }
         }
         template<typename U = T>
-        std::enable_if_t<std::is_move_assignable_v<U>> move(uint32 index, U* source, uint32 count) {
-            count = std::min(count, m_size - index);
+        std::enable_if_t<std::is_assignable_v<T, const U&>> copy(uint32 to, uint32 from, uint32 count) {
+            if (m_data) {
+                count = std::min(m_size - to, count);
+                count = std::min(m_size - from, count);
+                
+                // Copy backwards!
+                if (from < to && to < from + count) {
+                    for (uint32 i = count - 1; i != -1; --i) {
+                        m_data[to + i] = m_data[from + i];
+                    }
+                }
+                // Copy forwards!
+                else {
+                    for (uint32 i = 0; i < count; ++i) {
+                        m_data[to + i] = m_data[from + i];
+                    }
+                }
+            }
+        }
+        template<typename U = T>
+        std::enable_if_t<std::is_assignable_v<T, U&&>> move(uint32 index, U* source, uint32 count) {
+            if (m_data) {
+                count = std::min(count, m_size - index);
 
-			// Move backwards!
-			if (source < m_data + index && m_data + index < source + count) {
-				for (uint32 i = count - 1; i != -1; --i) {
-					m_data[index + i] = std::move(source[i]);
-				}
-			}
-			else {
-				for (uint32 i = 0; i < count; ++i) {
-					m_data[index + i] = std::move(source[i]);
-				}
-			}
-			// Move forwards!
-        }
-        template<typename U = T>
-        std::enable_if_t<std::is_move_assignable_v<U>> move(uint32 to, uint32 from, uint32 count) {
-            count = std::min(m_size - to, count);
-            count = std::min(m_size - from, count);
-            
-            // Move backwards!
-            if (from < to && to < from + count) {
-                for (uint32 i = count - 1; i != -1; --i) {
-                    m_data[to + i] = std::move(m_data[from + i]);
+                // Move backwards!
+                if (source < m_data + index && m_data + index < source + count) {
+                    for (uint32 i = count - 1; i != -1; --i) {
+                        m_data[index + i] = std::move(source[i]);
+                    }
+                }
+                // Move forwards!
+                else {
+                    for (uint32 i = 0; i < count; ++i) {
+                        m_data[index + i] = std::move(source[i]);
+                    }
                 }
             }
-            // Move forwards!
-            else {
-                for (uint32 i = 0; i < count; ++i) {
-                    m_data[to + i] = std::move(m_data[from + i]);
+        }
+        template<typename U = T>
+        std::enable_if_t<std::is_assignable_v<T, U&&>> move(uint32 to, uint32 from, uint32 count) {
+            if (m_data) {
+                count = std::min(m_size - to, count);
+                count = std::min(m_size - from, count);
+                
+                // Move backwards!
+                if (from < to && to < from + count) {
+                    for (uint32 i = count - 1; i != -1; --i) {
+                        m_data[to + i] = std::move(m_data[from + i]);
+                    }
+                }
+                // Move forwards!
+                else {
+                    for (uint32 i = 0; i < count; ++i) {
+                        m_data[to + i] = std::move(m_data[from + i]);
+                    }
                 }
             }
         }
@@ -315,6 +326,24 @@ namespace Neuro
         
         T* data() { return m_data; }
         const T* data() const { return m_data; }
+
+	private:
+		// The kewl thing about these fallbacks is it will first try and move,
+		// then try to copy, and finally do nothing if none of those two exist.
+		// That is all thanks to type coercion and function overload resolution.
+		template<typename U = T>
+		auto resize_restore(U* oldData, uint32 count)
+			-> decltype(move(0, oldData, count))
+		{
+			move(0, oldData, count);
+		}
+		template<typename U = T>
+		auto resize_restore(const U* oldData, uint32 count)
+			-> decltype(copy(0, oldData, count))
+		{
+			copy(0, oldData, count);
+		}
+		void resize_restore(...) {}
     };
     
     /**
