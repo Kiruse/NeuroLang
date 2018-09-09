@@ -64,4 +64,7 @@ namespace Neuro {
     // Following are various Error definitions.
     
     DECLARE_NEURO_ERROR(No)
+    DECLARE_NEURO_ERROR(Generic)
+    DECLARE_NEURO_ERROR(NotImplemented)
+    DECLARE_NEURO_ERROR(NotEnoughMemory)
 }

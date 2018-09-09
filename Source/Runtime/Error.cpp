@@ -29,4 +29,7 @@ namespace Neuro
     
     
     DEFINE_NEURO_ERROR(No, 0, "No error occurred. Everything is fine.")
+    DEFINE_NEURO_ERROR(Generic, 1, "Some error occurred. Nothing is alright!")
+    DEFINE_NEURO_ERROR(NotImplemented, 2, "Operation not implemented.")
+    DEFINE_NEURO_ERROR(NotEnoughMemory, 3, "The application drained all available memory!")
 }

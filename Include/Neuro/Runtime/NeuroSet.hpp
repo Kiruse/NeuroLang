@@ -205,9 +205,9 @@ namespace Neuro
             }
             return *this;
         }
-        StandardHashSet& operator=(const StandardHashSet&) {
+        StandardHashSet& operator=(const StandardHashSet& other) {
             clear();
-            buckets.resize(other.size());
+            buckets.resize(other.buckets.length());
             add(other);
             return *this;
         }

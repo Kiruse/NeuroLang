@@ -38,7 +38,16 @@ namespace Neuro
     }
     
     template<typename NumericType>
-    hashT calculateHash(NumericType value) { return static_cast<hashT>(value); }
+    auto calculateHash(NumericType value)
+     -> decltype(static_cast<hashT>(value))
+    {
+        return static_cast<hashT>(value);
+    }
+    
+    template<typename PointerType>
+    hashT calculateHash(PointerType* const& ptr) {
+        return (hashT)((std::uintptr_t)ptr % (hashT)-1);
+    }
     
     /** Used heavily in the Neuro Lang. Object properties are essentially addressed by their hash. */
     inline hashT calculateHash(const String& string) {

@@ -13,8 +13,6 @@
 
 namespace Neuro
 {
-    constexpr struct FMaybeForceInitTag {} MaybeForceInitTag {};
-    
     /**
      * The Maybe class uses some black magic / reinterpretation_cast magic and
      * some meta data to keep track of whether the internally stored data type
@@ -25,7 +23,7 @@ namespace Neuro
      * copy this data type as well, even though the type itself is not trivial.
      */
     template<typename T>
-    class Maybe {
+    class NEURO_API Maybe {
         bool m_valid;
         /** This is where we cast magic. */
         unsigned char m_buffer[sizeof(T)];

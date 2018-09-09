@@ -61,7 +61,7 @@ namespace Neuro
             return getOrCreate(key);
         }
         const HashMapPair<KeyT, ValueT>& operator[](const KeyT& key) const {
-            return getOrCreate(key);
+            return get(createPair(key));
         }
         
         HashMapPair<KeyT, ValueT>& getOrCreate(const KeyT& key) {
