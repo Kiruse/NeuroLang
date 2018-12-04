@@ -49,6 +49,15 @@ namespace Neuro {
         const String& name() const { return m_name; }
         const String& message() const { return m_message; }
         
+        /**
+         * Convenient implicit cast to check if any error occurred (i.e. error
+         * code is not 0).
+         */
+        operator bool() const { return m_code; }
+        
+        bool operator==(const Error& other) const { return m_code == other.m_code; }
+        bool operator!=(const Error& other) const { return !(*this==other); }
+        
     public:
         /**
          * @brief Lookup an error by its code.
@@ -66,5 +75,12 @@ namespace Neuro {
     DECLARE_NEURO_ERROR(No)
     DECLARE_NEURO_ERROR(Generic)
     DECLARE_NEURO_ERROR(NotImplemented)
+    DECLARE_NEURO_ERROR(NotSupported)
     DECLARE_NEURO_ERROR(NotEnoughMemory)
+    DECLARE_NEURO_ERROR(IllegalDuplicate)
+    DECLARE_NEURO_ERROR(InvalidState)
+    DECLARE_NEURO_ERROR(InvalidArgument)
+    DECLARE_NEURO_ERROR(NullPointer)
+    DECLARE_NEURO_ERROR(DataSetNotFound)
+    DECLARE_NEURO_ERROR(UncaughtException)
 }

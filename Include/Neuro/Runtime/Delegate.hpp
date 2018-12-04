@@ -298,6 +298,15 @@ namespace Neuro
         }
         
         /**
+         * Removes all registered delegates. Useful when the context of the
+         * delegate changes and needs to be reset.
+         */
+        MulticastDelegate& clear() {
+            buffer.clear();
+            return *this;
+        }
+        
+        /**
          * Invoke every delegate in this multicast and accumulate their return
          * values inside a buffer which is then returned.
          */
@@ -332,4 +341,7 @@ namespace Neuro
         const Delegate<ReturnType, Args...>* end() const { return cend(); }
         const Delegate<ReturnType, Args...>* cend() const { return reinterpret_cast<const Delegate<ReturnType, Args...>*>(buffer.cend()); }
     };
+    
+    template<typename... Args>
+    using EventDelegate = MulticastDelegate<void, Args...>;
 }

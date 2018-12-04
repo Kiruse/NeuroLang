@@ -106,5 +106,6 @@ namespace Neuro {
         
         inline void fail() { throw AssertionException(); }
         inline void fail(const std::string& message) { throw AssertionException(message); }
+        inline void shouldNotEnter() { throw AssertionException("The application took a branch it should have never entered."); }
     }
 }

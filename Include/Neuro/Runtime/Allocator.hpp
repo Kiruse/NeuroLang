@@ -33,53 +33,7 @@
 // and a centralized documentation for various allocator methods should be
 // maintained to avoid confusion or redundancy.
 // 
-// # Standard Allocator Methods
-// 
-// The following standard allocator methods exist in the basic runtime:
-// 
-// ## template<typename... Args> void create(uint32 index, uint32 count, Args... args);
-// 
-// Initialize a specific memory range, perfectly forwarding the specified
-// arguments to the constructor.
-// 
-// ## void copy(uint32 index, const T* source, uint32 count);
-// 
-// Copy `count` values from the source pointer into this array at the specified
-// index.
-// 
-// ## void copy(uint32 to, uint32 from, uint32 count);
-// 
-// Copy *at most* `count` values from within this buffer to another location
-// in this buffer. `count` may be adjusted as to prevent writing to or reading
-// from outer bounds.
-// 
-// ## void move(uint32 index, T* source, uint32 count);
-// 
-// Analogous to copy(uint32, T*, uint32);
-// 
-// ## void move(uint32 to, uint32 from, uint32 count);
-// 
-// Analogous to copy(uint32, uint32, uint32);
-// 
-// ## void destroy(uint32 index, uint32 count);
-// 
-// Destroys the specified memory range within this buffer, calling the destructor.
-// 
-// ## T* get(uint32 index), const T* get(uint32 index) const;
-// 
-// Gets the element at the specified index. May or may not verify the element.
-// May or may not return NULL.
-// 
-// ## uint32 size() const, uint32 actual_size() const, uint32 numBytes() const;
-// 
-// Gets the safely usable max number of elements, the actual max number of
-// elements, and the number of bytes contained in the buffer respectively.
-// 
-// ## T* data(), const T* data() const;
-// 
-// Gets the pointer to the buffer. May or may not be NULL. If an allocator
-// wraps its elements to track additional data, it is strongly discouraged to
-// provide this method.
+// TODO: Document our defined methods and constructors, lol.
 // -----
 // Copyright (c) Kiruse 2018
 #pragma once
@@ -112,19 +66,34 @@ namespace Neuro
         uint32 m_size;
         T* m_data;
         
-        RawHeapAllocator() = default;
-        RawHeapAllocator(uint32 desiredSize) : m_data(nullptr) { resize(desiredSize); }
-        RawHeapAllocator(const RawHeapAllocator& other) : m_data(nullptr) {
-            resize(other.m_size);
-            std::memcpy(m_data, other.m_data, m_size * sizeof(T));
+    protected:
+        RawHeapAllocator(uint32 size, T* data) : m_size(size), m_data(data) {}
+        
+    public:
+        RawHeapAllocator() : m_size(0), m_data(nullptr) {}
+        RawHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(alloc(desiredSize)) {}
+        RawHeapAllocator(const RawHeapAllocator& other) : m_size(other.m_size), m_data(alloc(other.m_size)) {
+            // This may be nullptr if other.size() == 0.
+            if (m_data) {
+                std::memcpy(m_data, other.m_data, m_size * sizeof(T));
+            }
         }
         RawHeapAllocator(RawHeapAllocator&& other) : m_size(other.m_size), m_data(other.m_data) {
             other.m_data = nullptr;
             other.m_size = 0;
         }
         RawHeapAllocator& operator=(const RawHeapAllocator& other) {
-            resize(other.m_size);
-            if (m_data) std::memcpy(m_data, other.m_data, other.m_size * sizeof(T));
+            if (!m_data) {
+                m_data = alloc(other.m_size);
+            }
+            else {
+                resize(other.m_size);
+            }
+            
+            if (m_data) {
+                std::memcpy(m_data, other.m_data, other.m_size * sizeof(T));
+            }
+            
             return *this;
         }
         RawHeapAllocator& operator=(RawHeapAllocator&& other) {
@@ -142,13 +111,9 @@ namespace Neuro
         }
         
         void resize(uint32 desiredSize) {
-            if (desiredSize != m_size || !m_data) {
-                if (m_data) {
-                    m_data = reinterpret_cast<T*>(std::realloc(m_data, desiredSize * sizeof(T)));
-                }
-                else {
-                    m_data = reinterpret_cast<T*>(std::malloc(desiredSize * sizeof(T)));
-                }
+            // Must not resize non-existent data.
+            if (m_data && desiredSize != m_size) {
+                m_data = reinterpret_cast<T*>(std::realloc(m_data, desiredSize * sizeof(T)));
                 m_size = desiredSize;
             }
         }
@@ -190,6 +155,12 @@ namespace Neuro
         
         T* data() { return m_data; }
         const T* data() const { return m_data; }
+        
+    protected:
+        static T* alloc(uint32 desiredSize) {
+            if (!desiredSize) return nullptr;
+            return reinterpret_cast<T*>(std::malloc(sizeof(T) * desiredSize));
+        }
     };
     
     /**
@@ -204,11 +175,18 @@ namespace Neuro
         uint32 m_size;
         T* m_data;
         
-        RAIIHeapAllocator() = default;
-        RAIIHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(new T[desiredSize]) {}
+    protected:
+        RAIIHeapAllocator(uint32 size, T* data) : m_size(size), m_data(data) {}
+        
+    public:
+        RAIIHeapAllocator() : m_size(0), m_data(nullptr) {}
+        RAIIHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(alloc(desiredSize)) {}
         template<typename U = T, typename = std::enable_if_t<std::is_assignable_v<T, const U&>>>
-        RAIIHeapAllocator(const RAIIHeapAllocator<U>& other) : m_size(other.m_size), m_data(new T[other.m_size]) {
-            copy(0, other.m_data, m_size);
+        RAIIHeapAllocator(const RAIIHeapAllocator<U>& other) : m_size(other.m_size), m_data(alloc(other.m_size)) {
+            // This may be nullptr if other.size() == 0.
+            if (m_data) {
+                copy(0, other.m_data, m_size);
+            }
         }
         RAIIHeapAllocator(RAIIHeapAllocator&& other) : m_size(other.m_size), m_data(other.m_data) {
             other.m_size = 0;
@@ -237,13 +215,12 @@ namespace Neuro
         }
         
         void resize(uint32 desiredSize) {
-            if (desiredSize != m_size || !m_data) {
+            // Must not resize non-existent data.
+            if (m_data && desiredSize != m_size) {
                 T* tmp = m_data;
                 m_data = new T[desiredSize];
-                if (tmp) {
-                    resize_restore(tmp, std::min(desiredSize, m_size));
-                    delete[] tmp;
-                }
+                resize_restore(tmp, std::min(desiredSize, m_size));
+                delete[] tmp;
 				m_size = desiredSize;
             }
         }
@@ -327,7 +304,12 @@ namespace Neuro
         T* data() { return m_data; }
         const T* data() const { return m_data; }
 
-	private:
+	protected:
+        static T* alloc(uint32 desiredSize) {
+            if (!desiredSize) return nullptr;
+            return new T[desiredSize];
+        }
+        
 		// The kewl thing about these fallbacks is it will first try and move,
 		// then try to copy, and finally do nothing if none of those two exist.
 		// That is all thanks to type coercion and function overload resolution.
@@ -353,7 +335,7 @@ namespace Neuro
      * For optimization, you might want to consider using a NonTrivialHeapAllocator
      * with forced trivial copying and moving.
      */
-    template<typename T> using AutoHeapAllocator = typename toggle_type<RAIIHeapAllocator<T>, RawHeapAllocator<T>, std::is_trivial_v<T>>::type;
+    template<typename T> using AutoHeapAllocator = typename toggle_type<std::is_trivial_v<T>, RawHeapAllocator<T>, RAIIHeapAllocator<T>>::type;
     
     /**
      * @brief Specialized heap allocator for Neuro::String.

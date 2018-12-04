@@ -39,16 +39,51 @@ target_link_libraries(NeuroLang NeuroRT)
 
 # ------------------------------------------------------------------------------
 # Target: NeuroTest
+
+# CLI App
 add_executable(NeuroTest "")
 target_include_directories(NeuroTest PRIVATE "Test")
 target_include_directories(NeuroTest PRIVATE "Include/Neuro/Runtime")
 
-file(GLOB_RECURSE INCLUDES_TEST "Test/*.hpp")
-file(GLOB_RECURSE SOURCES_TEST "Test/*.cpp")
+file(GLOB INCLUDES_TEST "Test/*.hpp")
+file(GLOB SOURCES_TEST  "Test/*.cpp")
 target_sources(NeuroTest PRIVATE ${INCLUDES_TEST})
 target_sources(NeuroTest PRIVATE ${SOURCES_TEST})
 
 target_link_libraries(NeuroTest NeuroRT)
+
+# Individual Unit Tests
+
+# Generate NeuroRT unit tests
+file(GLOB ITEMS "Test/NeuroRT/*")
+foreach(ITEM ${ITEMS})
+    get_filename_component(TARGET_NAME ${ITEM} NAME_WE)
+    get_filename_component(EXTENSION   ${ITEM} EXT)
+    
+    # Define the unit test as an individual executable target...
+    add_executable(${TARGET_NAME} "")
+    
+    # ... which depends on the runtime & unit test suite
+    target_include_directories(${TARGET_NAME} PRIVATE "Include/Neuro/Runtime")
+    target_include_directories(${TARGET_NAME} PRIVATE "Test")
+    
+    target_link_libraries(${TARGET_NAME} NeuroRT)
+    
+    # Recursively add every source and header file in the test directory
+    string(COMPARE EQUAL ${EXTENSION} ".cpp" MODULE_IS_SOURCE)
+    
+    if(IS_DIRECTORY ${ITEM})
+        file(GLOB UNITTEST_INCLUDES ${ITEM}/*.hpp)
+        target_sources(${TARGET_NAME} PRIVATE ${UNITTEST_INCLUDES})
+        
+        file(GLOB UNITTEST_SOURCES  ${ITEM}/*.cpp)
+        target_sources(${TARGET_NAME} PRIVATE ${UNITTEST_SOURCES})
+        
+    # Add only the source file as the unit test itself
+    elseif(${MODULE_IS_SOURCE})
+        target_sources(${TARGET_NAME} PRIVATE ${ITEM})
+    endif()
+endforeach()
 
 
 # ------------------------------------------------------------------------------

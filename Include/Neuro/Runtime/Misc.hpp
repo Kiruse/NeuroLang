@@ -26,11 +26,51 @@ namespace Neuro
             return lhs == rhs;
         }
         
+        template<typename T>
+        inline bool lessThan(const T& lhs, const T& rhs) {
+            return lhs < rhs;
+        }
+        
+        template<typename T>
+        inline bool greaterThan(const T& lhs, const T& rhs) {
+            return lhs > rhs;
+        }
+        
+        template<typename T>
+        inline bool lessThanOrEqual(const T& lhs, const T& rhs) {
+            return lhs <= rhs;
+        }
+        
+        template<typename T>
+        inline bool greaterThanOrEqual(const T& lhs, const T& rhs) {
+            return lhs >= rhs;
+        }
+        
         namespace not
         {
             template<typename T>
             inline bool equal(const T& lhs, const T& rhs) {
                 return lhs != rhs;
+            }
+            
+            template<typename T>
+            inline bool lessThan(const T& lhs, const T& rhs) {
+                return lhs >= rhs;
+            }
+            
+            template<typename T>
+            inline bool greaterThan(const T& lhs, const T& rhs) {
+                return lhs <= rhs;
+            }
+            
+            template<typename T>
+            inline bool lessThanOrEqual(const T& lhs, const T& rhs) {
+                return lhs > rhs;
+            }
+            
+            template<typename T>
+            inline bool greaterThanOrEqual(const T& lhs, const T& rhs) {
+                return lhs < rhs;
             }
         }
     }
@@ -44,11 +84,11 @@ namespace Neuro
      * Toggles between one of two types based on a boolean value. Assumes the
      * first data type if `Switch` is false, otherwise the second.
      */
-    template<typename T, typename U, bool Switch> struct toggle_type { typedef T type; };
-    template<typename T, typename U> struct toggle_type<T, U, true> { typedef U type; };
-    template<typename T, typename U, bool Switch> using toggle_type_t = typename toggle_type<T, U, Switch>::type;
+    template<bool Switch, typename T, typename U> struct toggle_type { typedef T type; };
+    template<typename T, typename U> struct toggle_type<false, T, U> { typedef U type; };
+    template<bool Switch, typename T, typename U> using toggle_type_t = typename toggle_type<Switch, T, U>::type;
     
-    template<typename T, bool Const> struct toggle_const { typedef const T type; };
-    template<typename T> struct toggle_const<T, false> { typedef T type; };
-    template<typename T, bool Const> using toggle_const_t = typename toggle_const<T, Const>::type;
+    template<bool Const, typename T> struct toggle_const { typedef const T type; };
+    template<typename T> struct toggle_const<false, T> { typedef T type; };
+    template<bool Const, typename T> using toggle_const_t = typename toggle_const<Const, T>::type;
 }

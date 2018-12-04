@@ -4,22 +4,20 @@
 // Copyright (c) Kiruse 2018 Germany
 #pragma once
 
-#include <sys/ioctl.h>
-#include <unistd.h>
+#include "NeuroString.hpp"
+#include "PlatformConstants.hpp"
 
 namespace Neuro {
     namespace Testing
     {
-        int getTtyCols() {
-            winsize w;
-            ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-            return w.ws_col;
-        }
+        int getTtyCols();
+        int getTtyRows();
         
-        int getTtyRows() {
-            winsize w;
-            ioctl(STDOUT_FILENO, TIOCGWINSZ, &w);
-            return w.ws_row;
+        //uint32 launch(const std::path& path, uint32 timeout = (uint32)-1, String& stdout, String& stderr, bool& timedout, uint32& extraerror);
+        
+        namespace fs
+        {
+            bool isExecutable(const std::filesystem::path& path);
         }
     }
 }

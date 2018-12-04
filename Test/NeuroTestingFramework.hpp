@@ -11,6 +11,9 @@
 // possible, code has been templated in regular C++ standard fashion, which
 // should make it a bit easier to transpire the library to multibyte character
 // strings with different encodings in the future.
+// 
+// TODO: Buffer section & test output and write at the end of the program.
+// This allows us to sort the results beforehand and maybe do other nice things.
 // -----
 // Copyright (c) Kiruse 2018 Germany
 // License: GNU GPL 3.0

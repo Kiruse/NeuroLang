@@ -24,6 +24,12 @@
 
 namespace Neuro
 {
+    template<typename T>
+    inline NEURO_API hashT hashhelper(const T& value) {
+        return calculateHash(value);
+    }
+    
+    
     /** Trivial identifier for a single element in the hash set. Valid as long as the associated hash set doesn't change. */
     struct NEURO_API StandardHashSetElementIdentifier {
         uint32 bucketIndex;
@@ -47,8 +53,9 @@ namespace Neuro
         hashT m_hashcode;
         
     public:
-        StandardHashSetBucket(uint32 hashcode, uint32 size = 1, uint32 expand = 1) : buffer(size, expand), m_hashcode(hashcode) {}
+        StandardHashSetBucket(hashT hashcode, uint32 size = 1, uint32 expand = 1) : buffer(size, expand), m_hashcode(hashcode) {}
         
+    public:
         void add(const T& elem) {
             buffer.add(elem);
         }
@@ -105,7 +112,7 @@ namespace Neuro
      */
     template<typename T,
              bool (*Comparator)(const T&, const T&) = is::equal,
-             hashT (*Hasher)(const T&) = calculateHash,
+             hashT (*Hasher)(const T&) = hashhelper,
              typename BucketT = StandardHashSetBucket<T, Comparator, AutoHeapAllocator<T>>,
              typename Allocator = RawHeapAllocator<BucketT>
             >
@@ -124,7 +131,7 @@ namespace Neuro
             typedef std::bidirectional_iterator_tag iterator_category;
             
         private:
-            typedef toggle_const_t<StandardHashSet, Immutable> setType;
+            typedef toggle_const_t<Immutable, StandardHashSet> setType;
             setType& set;
             StandardHashSetElementIdentifier id;
             
@@ -166,7 +173,7 @@ namespace Neuro
             template<bool OtherImmutable> bool operator==(const Iterator<OtherImmutable>& other) const { return set.buckets.data() == other.set.buckets.data() && id == other.id; }
             template<bool OtherImmutable> bool operator!=(const Iterator<OtherImmutable>& other) const { return !(*this == other); }
             
-            toggle_const_t<T, Immutable>& operator*() {
+            toggle_const_t<Immutable, T>& operator*() {
                 return set.get(id);
             }
             const T& operator*() const {
@@ -191,6 +198,10 @@ namespace Neuro
             for (auto curr : init) {
                 add(curr);
             }
+        }
+        template<typename Iterator>
+        StandardHashSet(const Iterator& first, const Iterator& last) : buckets(8) {
+            add(first, last);
         }
         StandardHashSet(const StandardHashSet& other) : buckets(other.buckets.size()) {
             // There isn't really any other way to copy the contents of the set,
@@ -294,6 +305,22 @@ namespace Neuro
             }
             return *this;
         }
+        
+        /**
+         * Gets any element from the set in no particular order.
+         * 
+         * Note: The implementation just gets the "first" element it finds in
+         * the underlying buffer.
+         */
+        T& any() { return *begin(); }
+        
+        /**
+         * Gets any element from the set in no particular order.
+         * 
+         * Note: The implementation just gets the "first" element it finds in
+         * the underlying buffer.
+         */
+        const T& any() const { return *cbegin(); }
         
         void clear() {
             buckets.clear();
@@ -496,42 +523,5 @@ namespace Neuro
             uint32 index = insertBucket(hash, 0, buckets.length());
             return buckets[index];
         }
-    };
-    
-    
-    /**
-     * A simple element wrapper for the fast hash set, so we even know which
-     * buckets are valid and which are not.
-     */
-    template<typename T>
-    struct NEURO_API FastHashSetElementWrapper {
-        bool valid;
-        T value;
-    };
-    
-    /**
-     * The Fast Hash Set is a specialized implementation especially efficient for
-     * medium-size hash sets. It uses empty memory buffers and a special notion
-     * of buckets and bucketbuckets to achieve O(m) reading and writing, but
-     * O(n / m) = O(n) resizing, where m is a constant bucket size, and resizing
-     * may become O(1) if the data type is trivial / can be moved bytewise,
-     * depending on the platform's performance of std::memcpy.
-     * 
-     * Since within Neuro values are represented through Neuro::Value, which is
-     * a trivial type, this is indeed an extremely fast implementation, at the
-     * expense of buffer size. Nonetheless this is the preferred implementation.
-     * 
-     * The entire implementation revolves around mathematically simple formulas
-     * to calculate the offset within the buffer. The bucketbuckets determine
-     * a first-layer subrange in the buffer where we should attempt to find the
-     * corresponding bucket of a hash code. Thus bucketbuckets have a fixed size
-     * and buckets share the same size.
-     * 
-     * Oh, and also: TODO.
-     */
-    template<typename T, bool (*Comparator)(const T&, const T&), uint32 (*Hasher)(const T&)>
-    struct NEURO_API FastHashSet {
-        AutoHeapAllocator<FastHashSetElementWrapper<T>> alloc;
-        
     };
 }

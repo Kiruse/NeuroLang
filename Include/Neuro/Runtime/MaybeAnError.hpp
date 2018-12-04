@@ -26,7 +26,7 @@ namespace Neuro
         T& value() { return *m_maybe; }
         const T& value() const { return *m_maybe; }
         
-        bool valid() const { return err.code() == NoError::instance().code(); }
+        bool valid() const { return (bool)m_err; }
         operator bool() const { return valid(); }
     };
 }

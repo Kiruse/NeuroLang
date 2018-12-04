@@ -56,12 +56,23 @@ namespace Neuro
             >
     class NEURO_API StandardHashMap : public StandardHashSet<HashMapPair<KeyT, ValueT>, Comparator, calculateHash, BucketT, Allocator>
     {
+        typedef StandardHashSet<HashMapPair<KeyT, ValueT>, Comparator, calculateHash, BucketT, Allocator> Base;
+        
     public:
-        HashMapPair<KeyT, ValueT>& operator[](const KeyT& key) {
-            return getOrCreate(key);
+        bool has(const KeyT& key) const {
+            return contains(createPair(key));
         }
-        const HashMapPair<KeyT, ValueT>& operator[](const KeyT& key) const {
-            return get(createPair(key));
+        
+        StandardHashMap& remove(const KeyT& key) {
+            Base::remove(createPair(key));
+            return *this;
+        }
+        
+        ValueT& operator[](const KeyT& key) {
+            return getOrCreate(key).value.get();
+        }
+        const ValueT& operator[](const KeyT& key) const {
+            return get(createPair(key)).value.get();
         }
         
         HashMapPair<KeyT, ValueT>& getOrCreate(const KeyT& key) {
@@ -69,7 +80,7 @@ namespace Neuro
             auto tmpPair = createPair(key, hashcode);
             
             // Attempt to find an existing key.
-            auto id = find(createPair(key, hashcode));
+            auto id = find(tmpPair);
             if (id) {
                 return get(id);
             }
@@ -82,10 +93,7 @@ namespace Neuro
         
     protected:
         static HashMapPair<KeyT, ValueT> createPair(const KeyT& key) {
-            HashMapPair<KeyT, ValueT> pair;
-            pair.hashcode = calculateHash(key);
-            pair.key = key;
-            return pair;
+            return createPair(calculateHash(key), key);
         }
         
         static HashMapPair<KeyT, ValueT> createPair(const KeyT& key, hashT hashcode) {

@@ -1,15 +1,19 @@
-#ifndef NEURO_TYPES_H
-#define NEURO_TYPES_H
-
 /*******************************************************************************
  * Various types used within the neuro library, and exposed together with the
  * C interface. These types are either PoD or used as pointers.
+ * -----
+ * Copyright (c) Kiruse 2018
+ * License: GPL 3.0
  */
-struct neuroManagedMemory;
+#ifndef NEURO_TYPES_H
+#define NEURO_TYPES_H
+
+struct neuroArchetype;
+struct neuroBuffer;
 struct neuroFrame;
-struct neuroValue;
-struct neuroObjectWrapper;
+struct neuroManagedMemory;
 struct neuroObject;
+struct neuroValue;
 
 /**
  * Enumeration of general data types of neuroValue. Either one of primitives
@@ -28,8 +32,9 @@ enum neuroValueType {
     NVT_Long,
     NVT_Float,
     NVT_Double,
+    NVT_NativeObject,
     NVT_Object,
     NVT_MAX
 };
-    
+
 #endif /* NEURO_TYPES_H */

@@ -44,8 +44,7 @@ namespace Neuro
         return static_cast<hashT>(value);
     }
     
-    template<typename PointerType>
-    hashT calculateHash(PointerType* const& ptr) {
+    inline hashT calculateHash(void* ptr) {
         return (hashT)((std::uintptr_t)ptr % (hashT)-1);
     }
     

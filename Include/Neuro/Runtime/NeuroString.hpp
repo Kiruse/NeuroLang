@@ -241,6 +241,24 @@ namespace Neuro
             return *this;
         }
         
+        /**
+         * Lexigraphically compare this string to another in descending order.
+         * If this string should come before the other, returns -1. If this
+         * string should follow the other, returns 1. Otherwise if both strings
+         * are equal, returns 0.
+         */
+        int8 compareTo(const StringBase& other) const {
+            // Important: First compare characters, then lengths!
+            // Otherwise b < ab!
+            for (uint32 i = 0; i < std::min(length(), other.length()); ++i) {
+                if (get(i) < other[i]) return -1;
+                if (get(i) > other[i]) return 1;
+            }
+            if (length() < other.length()) return -1;
+            if (length() > other.length()) return 1;
+            return 0;
+        }
+        
         StringBase& operator+=(const StringBase& other) {
             return concat(other);
         }
@@ -254,6 +272,12 @@ namespace Neuro
             return StringBase(*this) + character;
         }
         
+        /**
+         * Compares two strings with each other and checks if their contents are
+         * lexigraphically equal.
+         * 
+         * This is a simplified, faster version of `compareTo()`.
+         */
         bool operator==(const StringBase& other) const {
             if (length() != other.length()) return false;
             for (uint32 i = 0; i < length(); ++i) {

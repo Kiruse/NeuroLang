@@ -11,7 +11,7 @@
                 "owner": "cpp",
                 "fileLocation": ["absolute"],
                 "pattern": {
-                    "regexp": "^\\s*(.*)\\((\\d+)\\): (warning|error) [A-z][0-9]{4}: (.*) \\[(.*)\\]$",
+                    "regexp": "^\\s*(.*)\\((\\d+)\\): (warning|error|fatal error) [A-z][0-9]{4}: (.*) \\[(.*)\\]$",
                     "file": 1,
                     "line": 2,
                     "severity": 3,
