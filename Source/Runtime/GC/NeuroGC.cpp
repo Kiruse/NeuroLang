@@ -40,7 +40,7 @@
 
 #include "GC/NeuroGC.h"
 #include "GC/NeuroGC.hpp"
-#include "GC/ManagedMemoryDescriptor.hpp"
+#include "GC/ManagedMemoryTable.hpp"
 #include "GC/Queue.hpp"
 
 #include "Error.hpp"
@@ -97,7 +97,7 @@ namespace Neuro {
              * that is known not to resize commonly and has survived multiple
              * scans (e.g. roots).
              */
-            uint32 longterm : 1;
+            uint32 dormant : 1; // TODO: Introduce "dormant" memory segments which contain objects that don't change in size anymore.
             
             
             struct Lock {
@@ -137,7 +137,7 @@ namespace Neuro {
             /**
              * Whether to terminate the GC main thread.
              */
-            std::atomic_flag terminate;
+            std::atomic<bool> terminate;
             
             /**
              * The GC's main thread through which memory is managed.
@@ -172,7 +172,7 @@ namespace Neuro {
              * expected to filter out those pointers they have discovered
              * during their scan.
              */
-            MulticastDelegate<void, StandardHashSet<ManagedMemoryPointerBase>&> scanners;
+            MulticastDelegate<void, Buffer<ManagedMemoryPointerBase>&> scanners;
             
             /**
              * Table containing descriptors of the various allocated memory
@@ -193,15 +193,6 @@ namespace Neuro {
             namespace LifeCycle
             {
                 /**
-                 * Queue of managed memory sections to scan during the next mark
-                 * iteration. The special Queue implementation guarantees that
-                 * enqueuing and extraction are wait-free. However, dequeuing is
-                 * not implemented, instead we extract and process entire queues
-                 * at once.
-                 */
-                Queue<ManagedMemoryPointerBase> scans;
-                
-                /**
                  * Synchronizes access to marked.
                  * 
                  * Note: Although we currently do not really need it, we will
@@ -217,24 +208,9 @@ namespace Neuro {
                 Buffer<ManagedMemoryPointerBase> marked;
                 
                 /**
-                 * Last time short term memory was scanned. Because we scan
-                 * about every 3 minutes, lax synchronization rules.
-                 * 
-                 * Note: General scans are preemptive. Next to these scans
-                 * we also use reactive scans timely close to queuing an
-                 * arbitrary memory section for scanning.
+                 * Duration in between scans.
                  */
-                std::chrono::steady_clock::time_point lastGeneralShortTermMemoryScan;
-                
-                /**
-                 * Last time long term memory was scanned. Because we scan
-                 * about every 10 minutes, lax synchronization rules.
-                 * 
-                 * Note: General scans are preemptive. Next to these scans
-                 * we also use reactive scans timely close to queuing an
-                 * arbitrary memory section for scanning.
-                 */
-                std::chrono::steady_clock::time_point lastGeneralLongTermMemoryScan;
+                std::chrono::milliseconds scanInterval;
             }
         }
         
@@ -251,7 +227,7 @@ namespace Neuro {
         /**
          * Managed Memory Scanner for our Object type.
          */
-        void gcScanObject(StandardHashSet<ManagedMemoryPointerBase>& scans);
+        void gcScanObject(Buffer<ManagedMemoryPointerBase>& objects);
         
         /**
          * Sweep garbage.
@@ -261,7 +237,7 @@ namespace Neuro {
         /**
          * Patch the gaps from sweeping.
          */
-        void gcCompact();
+        void gcCompactAll();
         
         template<bool Trivial>
         void gcCompact(ManagedMemorySegment* chain);
@@ -275,6 +251,11 @@ namespace Neuro {
         void updatePointers(ManagedMemoryOverhead* from, ManagedMemoryOverhead* to);
         
         void gcMain();
+        
+        /**
+         * Tests if the given segment contains the specified managed memory overhead.
+         */
+        bool segmentContainsHead(ManagedMemorySegment* segment, ManagedMemoryOverhead* head);
         
         
         ////////////////////////////////////////////////////////////////////
@@ -293,7 +274,7 @@ namespace Neuro {
             segment->allocating.clear();
             segment->ptr = reinterpret_cast<uint8*>(segment) + sizeof(ManagedMemorySegment);
             segment->size = size;
-            segment->longterm = false;
+            segment->dormant = false;
             
             return segment;
         }
@@ -303,6 +284,23 @@ namespace Neuro {
             while (!chain->next.compare_exchange_strong(compare, segment)) {
                 chain = chain->next.load();
             }
+        }
+        
+        bool segmentContainsHead(ManagedMemorySegment* segment, ManagedMemoryOverhead* head) {
+            const intptr_t nSegment = reinterpret_cast<intptr_t>(segment),
+                           nHead    = reinterpret_cast<intptr_t>(head);
+            return nSegment < nHead && nHead + head->elementSize * head->count + sizeof(ManagedMemoryOverhead) < nSegment + segment->size;
+        }
+        
+        ManagedMemoryOverhead* getFirstOverhead(ManagedMemorySegment* segment) {
+            // Due to the pointer type, + 1 adds the entire size of the ManagedMemorySegment struct,
+            // as if navigating to the element at index 1.
+            // Makes it nice and easy to find the first object.
+            return reinterpret_cast<ManagedMemoryOverhead*>(segment + 1);
+        }
+        
+        ManagedMemoryOverhead* getNextOverhead(ManagedMemoryOverhead* head) {
+            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(head) + head->elementSize * head->count);
         }
         
         
@@ -347,40 +345,32 @@ namespace Neuro {
             return addr;
         }
         
-        ManagedMemoryPointerBase allocateTrivial(uint32 size) {
+        ManagedMemoryPointerBase GC::allocateTrivial(uint32 size) {
             if (!GCGlobals::initialized) return ManagedMemoryPointerBase();
             
-            // Account for the overhead as well.
-            size += sizeof(ManagedMemoryOverhead);
+            // Actually allocate the buffer.
+            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
             
+            // Populate the overhead with meta data.
+            ManagedMemoryOverhead::init(head, size);
             
-            
-            return ManagedMemoryPointerBase(head);
+            // Return a managed pointer wrapper.
+            return GCGlobals::dataTable.addPointer(head);
         }
         
-        ManagedMemoryPointerBase allocateNonTrivial(uint32 size, const Delegate<void, void*, const void*>& copyDelegate, const Delegate<void, void*>& destroyDelegate) {
+        ManagedMemoryPointerBase GC::allocateNonTrivial(uint32 size, const Delegate<void, void*, const void*>& copyDelegate, const Delegate<void, void*>& destroyDelegate) {
             if (!GCGlobals::initialized) return ManagedMemoryPointerBase();
             
-            // Account for the overhead as well.
-            size += sizeof(ManagedMemoryOverhead);
+            // Actually allocate the buffer.
+            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstNonTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
             
-            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstNonTrivialMemSeg, size));
-            head->trivial = false;
-            head->size = size;
-            head->garbage = head->swept = head->relocated = false;
-            copyDelegate.copyTo(&head->copy_deleg.get());
-            destroyDelegate.copyTo(&head->destroy_deleg.get());
+            // Populate the overhead with meta data.
+            ManagedMemoryOverhead::init(head, size);
+            copyDelegate.copyTo(&head->copyDelegate.get());
+            destroyDelegate.copyTo(&head->destroyDelegate.get());
             
-            return ManagedMemoryPointerBase(head);
-        }
-        
-        
-        ////////////////////////////////////////////////////////////////////
-        // Misc. Low Level API
-        ////////////////////////////////////////////////////////////////////
-        
-        void markForScan(ManagedMemoryPointerBase pointer) {
-            GCGlobals::LifeCycle::scans.enqueue(pointer);
+            // Return a managed pointer wrapper.
+            return GCGlobals::dataTable.addPointer(head);
         }
         
         
@@ -388,14 +378,12 @@ namespace Neuro {
         // GC Background Thread
         ////////////////////////////////////////////////////////////////////
         
-        Error init() {
+        Error GC::init() {
             using namespace GCGlobals;
             using namespace GCGlobals::LifeCycle;
             
             std::scoped_lock{lifeMutex};
             if (initialized) return InvalidStateError::instance();
-            
-            compacting = false;
             
             // Start by allocating 2MiB of managed trivial memory
             firstTrivialMemSeg = createSegment(2048);
@@ -407,8 +395,8 @@ namespace Neuro {
             // Add our default Object scanner.
             scanners.add(ScannerDelegate::FunctionDelegate<gcScanObject>());
             
-            // Prevent scanning memory right away.
-            lastGeneralShortTermMemoryScan = lastGeneralLongTermMemoryScan = std::chrono::steady_clock::now;
+            // Setup next scan time.
+            scanInterval = std::chrono::seconds(3);
             
             // Start up the main thread
             terminate = false;
@@ -417,15 +405,15 @@ namespace Neuro {
             return NoError::instance();
         }
         
-        Error destroy() {
+        Error GC::destroy() {
             using namespace GCGlobals;
             
             std::scoped_lock{lifeMutex};
             if (!initialized) return InvalidStateError::instance();
             
-            terminate.test_and_set();
+            terminate = true;
             backgroundThread.join();
-            terminate.clear(); // Should the GC be restarted afterwards we need to make sure it won't shut down immediately again.
+            terminate = false; // Should the GC be restarted afterwards we need to make sure it won't shut down immediately again.
             
             // Trivial memory is easy to clean up. Just free everything in batches!
             ManagedMemorySegment* curr = firstTrivialMemSeg;
@@ -470,10 +458,10 @@ namespace Neuro {
                 marks += gcScan();
                 if (marks) {
                     gcSweep();
-                    gcCompact();
+                    gcCompactAll();
                     marks = 0;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                std::this_thread::sleep_for(GCGlobals::LifeCycle::scanInterval);
             }
             
             // Cleanup happens in GC::destroy()
@@ -484,60 +472,31 @@ namespace Neuro {
         // Scan Phase
         ////////////////////////////////////////////////////////////////////
         
-        bool shouldScanShortTermMemory() {
-            return GCGlobals::LifeCycle::lastGeneralShortTermMemoryScan - std::chrono::steady_clock::now < std::chrono::minutes(3);
-        }
-        
-        bool shouldScanLongTermMemory() {
-            return GCGlobals::LifeCycle::lastGeneralLongTermMemoryScan - std::chrono::steady_clock::now < std::chrono::minutes(10);
-        }
-        
         uint32 gcScan() {
-            bool scanShortTerm = shouldScanShortTermMemory(),
-                    scanLongTerm  = shouldScanLongTermMemory();
-            
-            if (scanShortTerm || scanLongTerm) {
-                if (scanShortTerm) {
-                    // TODO: Scan short term memory!
-                    // Discover managed short term memory across all short term segments.
-                    // scanners(scans);
-                    GCGlobals::LifeCycle::lastGeneralShortTermMemoryScan = std::chrono::steady_clock::now;
-                }
-                else if (scanLongTerm) {
-                    // TODO: Scan long term memory!
-                    // Discover managed long term memory across all long term segments.
-                    // scanners(scans);
-                    GCGlobals::LifeCycle::lastGeneralLongTermMemoryScan = std::chrono::steady_clock::now;
-                }
-            }
-            else if (scans.length(0)) {
-                Queue<ManagedMemoryPointerBase> queued;
-                GCGlobals::LifeCycle::scans.extract(queued);
-                StandardHashSet<ManagedMemoryPointerBase> scans = queued;
-                
-                scanners(scans);
-                return scans.count();
-            }
-            
-            return 0;
+            Buffer<ManagedMemoryPointerBase> pointers = GCGlobals::dataTable.getAllPointers();
+            GCGlobals::scanners(pointers);
+            return 0; // TODO: Proper return code?
         }
         
-        void gcScanObject(StandardHashSet<ManagedMemoryPointerBase>& scans) {
+        void gcScanObject(Buffer<ManagedMemoryPointerBase>& scans) {
             // No need to scan if nothing issued to scan.
-            if (!scans.count()) return;
+            if (!scans.length()) return;
             
+            // List of objects we need to scan.
             Buffer<Pointer> processList;
             
-            // Copy pointers to the roots (thread-safe).
+            // Start with scanning roots first.
             {
                 std::scoped_lock{GCGlobals::rootsMutex};
                 processList = GCGlobals::roots;
             }
             
-            // Iterate through the roots and attempt to find at least one
-            // reference to the flagged objects.
+            // Set of objects we've already visited. Avoids cyclic references
+            // resulting in infinite loops.
             StandardHashSet<Pointer> visited(processList.begin(), processList.end());
             
+            // Iterate through the roots and attempt to find at least one
+            // reference to the flagged objects.
             while (processList.length()) {
                 Pointer curr = processList.first();
                 processList.splice(0);
@@ -550,7 +509,7 @@ namespace Neuro {
                         scans.remove(other);
                         
                         // If we've found at least one reference to all trace targets, we're done for good.
-                        if (!scans.count()) return;
+                        if (!scans.length()) return;
                         
                         // Only process the found object once per phase.
                         if (!visited.contains(other)) {
@@ -561,8 +520,9 @@ namespace Neuro {
                 }
             }
             
+            // Remove the pointers from the pointer table
             for (auto garbage : scans) {
-                garbage->garbage = true;
+                GCGlobals::dataTable.removePointer(garbage);
             }
             
             {
@@ -576,6 +536,7 @@ namespace Neuro {
         // Sweep Phase
         ////////////////////////////////////////////////////////////////////
         
+        template<bool Trivial>
         void gcSweep() {
             using namespace GCGlobals::LifeCycle;
             
@@ -591,13 +552,20 @@ namespace Neuro {
                 auto pointer = processList.first();
                 processList.splice(0);
                 
+                auto* head = GC::getOverhead(pointer);
+                
                 // Call non-trivial memory's destruction delegate.
-                if (!pointer->trivial) {
-                    pointer->destroy_deleg(pointer.get());
+                if (!Trivial) {
+                    head->destroyDelegate.get()(pointer.get());
                 }
                 
-                pointer.getHeadPointer()->swept = true;
+                head->garbageState = EGarbageState::Swept;
             }
+        }
+        
+        void gcSweep() {
+            gcSweep<true>();
+            gcSweep<false>();
         }
         
         
@@ -605,14 +573,13 @@ namespace Neuro {
         // Compaction Phase
         ////////////////////////////////////////////////////////////////////
         
-        void gcCompact() {
+        template<bool> void gcCompact();
+        
+        void gcCompactAll() {
             using namespace GCGlobals;
             
-            if (!compacting.test_and_set()) {
-                gcCompact<true>();
-                gcCompact<false>();
-                compacting.clear();
-            }
+            gcCompact<true>();
+            gcCompact<false>();
         }
         
         /**
@@ -621,7 +588,7 @@ namespace Neuro {
          */
         ManagedMemoryOverhead* findSwept(ManagedMemorySegment* segment, ManagedMemoryOverhead* start) {
             auto* head = start;
-            while (segmentContainsHead(segment, head) && !head->swept) head = getNextOverhead(head);
+            while (segmentContainsHead(segment, head) && head->garbageState != EGarbageState::Swept) head = getNextOverhead(head);
             if (!segmentContainsHead(segment, head)) return nullptr;
             return head;
         }
@@ -632,7 +599,7 @@ namespace Neuro {
          */
         ManagedMemoryOverhead* findUnswept(ManagedMemorySegment* segment, ManagedMemoryOverhead* start) {
             auto* head = start;
-            while (segmentContainsHead(segment, head) && head->swept) head = getNextOverhead(head);
+            while (segmentContainsHead(segment, head) && head->garbageState == EGarbageState::Swept) head = getNextOverhead(head);
             if (!segmentContainsHead(segment, head)) return nullptr;
             return head;
         }
@@ -642,41 +609,7 @@ namespace Neuro {
             ManagedMemorySegment* sourceSegment = Trivial ? GCGlobals::firstTrivialMemSeg : GCGlobals::firstNonTrivialMemSeg;
             ManagedMemorySegment* targetSegment = nullptr;
             
-            while (segment) {
-                
-                
-                if (!targetSegment) targetSegment = createSegment(sourceSegment->size - sizeof(ManagedMemorySegment));
-                
-                // Reuse the now empty segment if possible.
-                if (segment->next->size <= segment->size) {
-                    fresh = segment;
-                }
-                
-                // Progress to the next segment.
-                segment = findSegmentForCompaction(segment);
-            }
             
-            // TODO: Find segment in need of compaction!
-            ManagedMemoryOverhead* head = reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(segment) + sizeof(ManagedMemoryOverhead));
-            
-            // Number of bytes compacted in the current segment. Because one
-            // segment may require multiple iterations in the below loop,
-            // needs to be declared here.
-            uint32 compactedBytes = 0;
-            
-            do {
-                // Find 
-                if (ManagedMemoryOverhead* swept = findSwept(segment, head)) {
-                    
-                }
-                
-                // Advance to the next segment.
-                else {
-                    compactedBytes = 0;
-                    segment->ptr -= compactedBytes;
-                    segment = segment->next;
-                }
-            } while(segment);
         }
         
         /**
@@ -685,8 +618,7 @@ namespace Neuro {
          */
         template<>
         void gcCompactInner<true>(ManagedMemorySegment* sourceSegment, ManagedMemorySegment* targetSegment, ManagedMemoryOverhead* head) {
-            ManagedMemorySegment::Lock{segment};
-            
+            // TODO
         }
         
         /**
@@ -695,35 +627,44 @@ namespace Neuro {
          */
         template<>
         void gcCompactInner<false>(ManagedMemorySegment* sourceSegment, ManagedMemorySegment* targetSegment, ManagedMemoryOverhead* head) {
-            
+            // TODO
         }
         
         
         ////////////////////////////////////////////////////////////////////////
-        // Neuro::Object::root() & Neuro::Object::unroot()
+        // Low Level API
+        ////////////////////////////////////////////////////////////////////////
+        
+        Error GC::registerMemoryScanner(const Delegate<void, Buffer<ManagedMemoryPointerBase>&>& scanner) {
+            GCGlobals::scanners += scanner;
+            return NoError::instance();
+        }
+        
+        
+        ////////////////////////////////////////////////////////////////////////
+        // Neuro::Object methods with direct 
         ////////////////////////////////////////////////////////////////////////
         
         void Object::root() {
-            std::scoped_lock{GC::GCGlobals::rootsMutex};
-            GC::GCGlobals::roots.add(Pointer(GC::ManagedMemoryPointerBase::fromObject(this)));
+            std::scoped_lock{GCGlobals::rootsMutex};
+            GCGlobals::roots.add(self);
         }
         
         void Object::unroot() {
-            std::scoped_lock{GC::GCGlobals::rootsMutex};
-            GC::GCGlobals::roots.remove(Pointer(GC::ManagedMemoryPointerBase::fromObject(this)));
+            std::scoped_lock{GCGlobals::rootsMutex};
+            GCGlobals::roots.remove(self);
         }
         
         Pointer Object::createObject(uint32 knownPropsCount, uint32 propsBufferCount) {
             // TODO: Possibly alter propsBufferCount before we allocate.
             const uint32 totalPropsCount = knownPropsCount + propsBufferCount;
-            auto memptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
             
-            if (memptr) {
-                Object* objptr = reinterpret_cast<Object*>(memptr.get());
-                new (objptr) Object(totalPropsCount);
-            }
+            auto rawptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
+            if (!rawptr) return Pointer();
             
-            return Pointer(memptr);
+            Pointer self(rawptr);
+            new (self.get()) Object(self, totalPropsCount);
+            return self;
         }
         
         Pointer Object::recreateObject(Pointer object, uint32 knownPropsCount, uint32 propsBufferCount) {
@@ -732,14 +673,12 @@ namespace Neuro {
             // Only recreate if we're actually resizing!
             if (totalPropsCount == object->propCount) return object;
             
-            auto memptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
+            auto rawptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
+            if (!rawptr) return Pointer();
             
-            if (memptr) {
-                Object* objptr = reinterpret_cast<Object*>(memptr.get());
-                new (objptr) Object(object, totalPropsCount);
-            }
-            
-            return Pointer(memptr);
+            Pointer self(rawptr);
+            new (self.get()) Object(self, object, totalPropsCount);
+            return self;
         }
     }
 }

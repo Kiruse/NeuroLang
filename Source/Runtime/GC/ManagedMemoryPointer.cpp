@@ -4,8 +4,9 @@
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
 #include "GC/NeuroGC.hpp"
-#include "GC/ManagedMemoryDescriptor.hpp"
+#include "GC/ManagedMemoryOverhead.hpp"
 #include "GC/ManagedMemoryPointer.hpp"
+#include "GC/ManagedMemoryTable.hpp"
 
 #define OVERHEAD_CAST(ptr) reinterpret_cast<ManagedMemoryOverhead*>(ptr)
 
@@ -20,7 +21,11 @@ namespace Neuro {
         }
         
         void ManagedMemoryPointerBase::clear() {
-            GC::markForScan(*this);
+            
+        }
+        
+        ManagedMemoryOverhead* ManagedMemoryPointerBase::getHeadPointer() const {
+            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(get()) - sizeof(ManagedMemoryOverhead));
         }
     }
 }

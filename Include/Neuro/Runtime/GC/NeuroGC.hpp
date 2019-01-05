@@ -42,7 +42,8 @@ namespace Neuro {
          */
         class GC
         {
-            using ScannerDelegate = Delegate<void, StandardHashMap<ManagedMemoryPointerBase>&>;
+        public: 
+            using ScannerDelegate = Delegate<void, Buffer<ManagedMemoryPointerBase>&>;
             
             /**
              * Initializes the Garbage Collector.
@@ -103,19 +104,21 @@ namespace Neuro {
             }
             
             /**
-             * Marks the given managed memory pointer for scanning in the next
-             * scan phase.
-             */
-            static void markForScan(ManagedMemoryPointerBase pointer);
-            
-            /**
              * Registers a new scanner to call during the scan phase. It is
              * expected that the scanner removes found pointers from the delegate's
              * passed in argument.
              * 
              * The scanner for our Object type is one such scanner.
              */
-            static Error registerMemoryScanner(const Delegate<void, StandardHashSet<ManagedMemoryPointerBase>&>& scanner);
+            static Error registerMemoryScanner(const Delegate<void, Buffer<ManagedMemoryPointerBase>&>& scanner);
+            
+            /**
+             * Helper method to retrieve the overhead pointer from any managed
+             * memory pointer.
+             */
+            static ManagedMemoryOverhead* getOverhead(ManagedMemoryPointerBase ptr) {
+                return ptr.getHeadPointer();
+            }
         };
     }
 }

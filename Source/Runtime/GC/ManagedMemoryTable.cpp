@@ -1,13 +1,18 @@
 ////////////////////////////////////////////////////////////////////////////////
 // Implementation of the managed memory table methods and everything that goes
 // along with them.
+// 
+// Implementation assumes the pointers point to a
+// Neuro::Runtime::ManagedMemoryOverhead prefixed buffer.
 // -----
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
 
 #include <cassert>
 
-#include "ManagedMemoryTable.hpp"
+#include "HashCode.hpp"
+#include "GC/ManagedMemoryTable.hpp"
+#include "GC/ManagedMemoryOverhead.hpp"
 
 namespace Neuro {
     namespace Runtime
@@ -19,9 +24,9 @@ namespace Neuro {
         ManagedMemoryTable::ManagedMemoryTable() : firstPage(), uidsalt(0) {}
         
         
-        ManagedMemoryPointerBase ManagedMemoryTable::addPointer(void* addr) {
+        ManagedMemoryPointerBase ManagedMemoryTable::addPointer(ManagedMemoryOverhead* addr) {
             // Non-changing comparison pointer value.
-            static constexpr void* cmpptr = nullptr;
+            static ManagedMemoryOverhead* cmpptr = nullptr;
             
             // Create the resulting abstract managed memory pointer.
             ManagedMemoryPointerBase result;
@@ -57,9 +62,13 @@ namespace Neuro {
             return result;
         }
         
-        Error ManagedMemoryTable::replacePointer(const ManagedMemoryPointerBase& ptr, void* newAddr) {
+        Error ManagedMemoryTable::replacePointer(const ManagedMemoryPointerBase& ptr, ManagedMemoryOverhead* newAddr) {
+            ManagedMemoryTablePage* page;
+            ManagedMemoryTableSection* section;
+            ManagedMemoryTableRow* row;
+            
             // Find the corresponding row, if any.
-            auto* row = get_internal(ptr.tableIndex);
+            if (!get_internal(ptr.tableIndex, page, section, row)) return DataSetNotFoundError::instance();
             
             // Ensure the row exists & has the same rowuid.
             if (!row || row->uid != ptr.rowuid) return DataSetNotFoundError::instance();
@@ -96,18 +105,49 @@ namespace Neuro {
             ManagedMemoryTablePage* page;
             ManagedMemoryTableSection* section;
             ManagedMemoryTableRow* row;
-            if (!get_internal(ptr.tableIndex, page, section, row)) {
+            
+            auto* that = const_cast<ManagedMemoryTable*>(this);
+            
+            if (!that->get_internal(ptr.tableIndex, page, section, row)) {
                 return nullptr;
             }
-            return row->ptr;
+            
+            return reinterpret_cast<uint8*>(row->ptr.load()) + sizeof(ManagedMemoryOverhead);
+        }
+        
+        Buffer<ManagedMemoryPointerBase> ManagedMemoryTable::getAllPointers() const {
+            Buffer<ManagedMemoryPointerBase> result;
+            const ManagedMemoryTablePage* page = &firstPage;
+            
+            uint32 tableIndex = 0;
+            
+            do {
+                for (uint8 i = 0; i < sizeof(page->sections) / sizeof(ManagedMemoryTableSection); ++i) {
+                    auto& section = page->sections[i];
+                    
+                    for (uint8 j = 0; j < sizeof(section.rows) / sizeof(ManagedMemoryTableRow); ++j) {
+                        ManagedMemoryOverhead* ptr = section.rows[j].ptr.load();
+                        if (ptr) {
+                            ManagedMemoryPointerBase wrapper;
+                            wrapper.tableIndex = tableIndex;
+                            wrapper.rowuid = section.rows[j].uid;
+                            result.add(wrapper);
+                        }
+                        
+                        tableIndex++;
+                    }
+                }
+            } while(page);
+            
+            return result;
         }
         
         
         ////////////////////////////////////////////////////////////////////////
         // Private methods
         
-        void ManagedMemoryTable::findSectionForInsert(void* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex) {
-            static constexpr ManagedMemoryTablePage* cmpptr = nullptr;
+        void ManagedMemoryTable::findSectionForInsert(ManagedMemoryOverhead* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex) {
+            static ManagedMemoryTablePage* cmpptr = nullptr;
             
             // Attempt to find a section in an existing page.
             ManagedMemoryTablePage* lastPage = page = &firstPage;
@@ -140,7 +180,7 @@ namespace Neuro {
                     }
                     
                     // Then try to find a section in the existing new page.
-                    sectionIndex = findSectionForInsert(lastPage);
+                    sectionIndex = findSectionForInsert(lastPage, addr);
                 }
             }
             
@@ -148,9 +188,9 @@ namespace Neuro {
             section = &page->sections[sectionIndex];
         }
         
-        uint32 ManagedMemoryTable::findSectionForInsert(ManagedMemoryTablePage* page, void* newAddr) {
-            for (sectionIndex = 0; sectionIndex < g_pagesize; ++sectionIndex) {
-                section = page->sections[sectionIndex];
+        uint32 ManagedMemoryTable::findSectionForInsert(ManagedMemoryTablePage* page, ManagedMemoryOverhead* newAddr) {
+            for (uint32 sectionIndex = 0; sectionIndex < g_pagesize; ++sectionIndex) {
+                auto& section = page->sections[sectionIndex];
                 uint8 count = section.numOccupied.fetch_add(1);
                 
                 // Undo if more than g_sectsize entries
@@ -184,7 +224,7 @@ namespace Neuro {
             
             if (sectionIndex > g_pagesize) return false;
             
-            section = &page.sections[sectionIndex];
+            section = &page->sections[sectionIndex];
             row = &section->rows[index];
             return true;
         }

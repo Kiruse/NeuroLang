@@ -5,7 +5,7 @@
 // License: GNU GPL 3.0
 #pragma once
 
-#include <windows>
+#include <Windows.h>
 
 namespace Neuro {
     namespace Platform {
@@ -16,7 +16,7 @@ namespace Neuro {
             inline bool isLinux()   { return false; }
             inline bool isApple()   { return false; }
             
-            extern constexpr char* PathSeparator;
+            extern constexpr char* PathSeparator = ";";
         }
     }
 }

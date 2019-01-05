@@ -28,7 +28,7 @@ namespace Neuro {
         /**
          * Since we have Neuro Objects, we may as well have Neuro Pointers. ;)
          */
-        using Pointer = GC::ManagedMemoryPointer<Object>;
+        using Pointer = ManagedMemoryPointer<Object>;
         
         
         /**
@@ -85,6 +85,11 @@ namespace Neuro {
             
         private: // Properties
             /**
+             * Permanent managed memory pointer to this instance.
+             */
+            Pointer self;
+            
+            /**
              * Pointer to the beginning of this object's property map.
              */
             Property* props;
@@ -98,17 +103,19 @@ namespace Neuro {
         private: // RAII
             // Constructor letting us know how many properties we have.
             // We already know where our properties are: right behind us.
-            Object(uint32 propCount);
+            Object(Pointer self, uint32 propCount);
+            
+            // Special move constructor receiving self pointer and pointer to object to copy from.
+            Object(Pointer self, Pointer other);
             
             // Special move constructor with different property map size.
-            Object(Pointer, uint32);
+            Object(Pointer self, Pointer other, uint32 newPropCount);
             
-            // Copy and move constructions are both intended,
-            Object(const Object&);
-            Object(Object&&);
+            // Objects must receive their self pointer, hence we cannot use copy and move constructors...
+            Object(const Object&) = delete;
+            Object(Object&&) = delete;
             
-            
-            // but copy and move assignments are not.
+            // nor copy and move assignments.
             Object& operator=(const Object&) = delete;
             Object& operator=(Object&&) = delete;
             
@@ -163,6 +170,20 @@ namespace Neuro {
              * Retrieves the maximum number of properties this object can hold.
              */
             uint32 capacity() const { return propCount; }
+            
+        private: // Internal helpers
+            /**
+             * Simple case of special move construction where the number of
+             * properties is the same. Properties are copied over bytewise.
+             */
+            void copyProps(Pointer other);
+            
+            /**
+             * Copies the properties of the other object whilst rehashing them.
+             * Usually conducted during special move construction where the
+             * number of properties of both objects differs.
+             */
+            void copyRehashProps(Pointer other);
             
             
         public: // Iterators

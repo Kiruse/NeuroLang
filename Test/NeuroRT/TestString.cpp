@@ -5,8 +5,8 @@
 #include <iostream>
 #include "Assert.hpp"
 #include "NeuroString.hpp"
-#include "NeuroTestingFramework.hpp"
 #include "StringBuilder.hpp"
+#include "CLInterface.hpp"
 
 namespace Neuro {
     template<typename T, typename Alloc>
@@ -43,7 +43,7 @@ namespace Neuro {
     }
 }
 
-void TestNeuroString() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;

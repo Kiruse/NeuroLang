@@ -5,7 +5,7 @@
 #include <iostream>
 #include "Assert.hpp"
 #include "NeuroBuffer.hpp"
-#include "NeuroTestingFramework.hpp"
+#include "CLInterface.hpp"
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -65,7 +65,7 @@ public:
 ////////////////////////////////////////////////////////////////////////////////
 // The actual unit test definition.
 
-void TestNeuroBuffer() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;

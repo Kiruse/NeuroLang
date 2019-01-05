@@ -27,6 +27,7 @@
 #include "DLLDecl.h"
 #include "Error.hpp"
 #include "ManagedMemoryPointer.hpp"
+#include "ManagedMemoryOverhead.hpp"
 #include "Numeric.hpp"
 
 #define NEURO_MANAGEDMEMORYTABLESECTION_SIZE 100
@@ -41,7 +42,7 @@ namespace Neuro {
              * Actual underlying physical address. Assumed to point to managed
              * memory.
              */
-            std::atomic<void*> ptr;
+            std::atomic<ManagedMemoryOverhead*> ptr;
             
             /**
              * Locally unique ID of the row, designed to minimize clashing
@@ -51,7 +52,9 @@ namespace Neuro {
              * and reused.
              */
             hashT uid;
-        }
+            
+            ManagedMemoryTableRow() : ptr(nullptr), uid(0) {}
+        };
         
         struct ManagedMemoryTableSection
         {
@@ -67,11 +70,7 @@ namespace Neuro {
              */
             std::atomic<uint8> numOccupied;
             
-            ManagedMemoryTableSection() : numOccupied(0) {
-                for (uint8 i = 0; i < 100; ++i) {
-                    ptrs[i] = nullptr;
-                }
-            }
+            ManagedMemoryTableSection() : numOccupied(0) {}
         };
         
         struct ManagedMemoryTablePage
@@ -113,7 +112,7 @@ namespace Neuro {
              * Assumes the given pointer points to valid managed memory, adds it
              * to the table, and returns a managed memory pointer.
              */
-            ManagedMemoryPointerBase addPointer(void* addr);
+            ManagedMemoryPointerBase addPointer(ManagedMemoryOverhead* addr);
             
             /**
              * Replaces the underlying address of the given managed memory pointer
@@ -125,7 +124,7 @@ namespace Neuro {
              * to move to a temporary buffer first before moving to the overlapping
              * locations, replacing the underlying address twice.
              */
-            Error replacePointer(const ManagedMemoryPointerBase& ptr, void* newAddr);
+            Error replacePointer(const ManagedMemoryPointerBase& ptr, ManagedMemoryOverhead* newAddr);
             
             /**
              * Removes the corresponding address from the table, freeing up the
@@ -134,9 +133,21 @@ namespace Neuro {
             Error removePointer(const ManagedMemoryPointerBase& ptr);
             
             /**
-             * Gets the pointer corresponding to the managed memory pointer.
+             * Gets the pointer corresponding to the actual data behind the
+             * managed memory pointer.
              */
             void* get(const ManagedMemoryPointerBase& ptr) const;
+            
+            template<typename T>
+            T* get(const ManagedMemoryPointer<T>& ptr) const
+            {
+                return reinterpret_cast<T*>((const ManagedMemoryPointerBase)ptr);
+            }
+            
+            /**
+             * Gets pointers to all elements listed in the table.
+             */
+            Buffer<ManagedMemoryPointerBase> getAllPointers() const;
             
         protected:
             /**
@@ -158,7 +169,7 @@ namespace Neuro {
              * memory. Even beyond that number it's highly unlikely we'll lock
              * dead.
              */
-            void findSectionForInsert(void* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex);
+            void findSectionForInsert(ManagedMemoryOverhead* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex);
             
             /**
              * Finds a table section from the specified page that has capacity
@@ -167,7 +178,7 @@ namespace Neuro {
              * 
              * If no such section could be found, returns a nullptr.
              */
-            uint32 findSectionForInsert(ManagedMemoryTablePage* page, void* addr);
+            uint32 findSectionForInsert(ManagedMemoryTablePage* page, ManagedMemoryOverhead* addr);
             
             /**
              * Gets the row stored behind the given index.

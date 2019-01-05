@@ -9,7 +9,7 @@ namespace Neuro {
     namespace Platform {
         namespace Windows
         {
-            constexpr char* PathSeparator = ";";
+            
         }
     }
 }

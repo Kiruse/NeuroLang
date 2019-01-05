@@ -22,6 +22,7 @@
 #include <atomic>
 #include <memory>
 
+#include "DLLDecl.h"
 #include "Delegate.hpp"
 #include "HashCode.hpp"
 #include "Numeric.hpp"
@@ -31,9 +32,14 @@ namespace Neuro {
         // Forward-declare Object class, as we need a pointer to it.
         class Object;
         
-        class ManagedMemoryPointerBase {
+        // Forward-declare overhead class, because this class is commonly used
+        // outside of the GC environment, yet the overhead struct is not.
+        struct ManagedMemoryOverhead;
+        
+        class NEURO_API ManagedMemoryPointerBase {
             friend class GC;
             friend class ManagedMemoryTable;
+            friend class Object;
             
             /**
              * Index of the managed memory descriptor within the internal
@@ -61,6 +67,9 @@ namespace Neuro {
             bool operator!=(const ManagedMemoryPointerBase& other) const { return !(*this == other); }
             
             operator bool() const { return tableIndex != npos && get() != nullptr; }
+            
+        private:
+            ManagedMemoryOverhead* getHeadPointer() const;
         };
         
         template<typename T>
@@ -74,9 +83,9 @@ namespace Neuro {
             T& operator*() const { return *get(); }
             T* operator->() const { return get(); }
         };
-        
-        inline hashT calculateHash(const ManagedMemoryPointerBase& pointer) {
-            return Neuro::calculateHash(pointer.get());
-        }
+    }
+    
+    inline hashT calculateHash(const Runtime::ManagedMemoryPointerBase& pointer) {
+        return Neuro::calculateHash(pointer.get());
     }
 }

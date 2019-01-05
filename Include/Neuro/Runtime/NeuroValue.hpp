@@ -28,7 +28,7 @@ namespace Neuro
      * or an arbitrary native object.
      */
     class NEURO_API Value {
-        using Pointer = Runtime::GC::ManagedMemoryPointer<Runtime::Object>;
+        using Pointer = Runtime::ManagedMemoryPointer<Runtime::Object>;
         
         neuroValueType m_type;
         bool m_unsigned;

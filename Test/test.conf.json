@@ -1,0 +1,4 @@
+{
+    "path": "../build/Debug",
+    "pattern": "^Test.*\\.exe$"
+}

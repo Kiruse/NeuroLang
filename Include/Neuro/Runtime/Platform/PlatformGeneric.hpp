@@ -17,8 +17,7 @@ namespace Neuro {
             inline bool isLinux()   { return false; }
             inline bool isApple()   { return false; }
             
-            constexpr char* DirectorySeparator;
-            constexpr char* PathSeparator;
+            constexpr char* PathSeparator = ":";
         }
     }
 }

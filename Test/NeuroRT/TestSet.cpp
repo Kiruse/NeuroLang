@@ -7,7 +7,7 @@
 
 #include "Assert.hpp"
 #include "NeuroSet.hpp"
-#include "NeuroTestingFramework.hpp"
+#include "CLInterface.hpp"
 
 namespace Neuro
 {
@@ -33,7 +33,7 @@ namespace Neuro
     }
 }
 
-void TestNeuroSet() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;

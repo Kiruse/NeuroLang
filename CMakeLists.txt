@@ -38,21 +38,8 @@ target_link_libraries(NeuroLang NeuroRT)
 
 
 # ------------------------------------------------------------------------------
-# Target: NeuroTest
-
-# CLI App
-add_executable(NeuroTest "")
-target_include_directories(NeuroTest PRIVATE "Test")
-target_include_directories(NeuroTest PRIVATE "Include/Neuro/Runtime")
-
-file(GLOB INCLUDES_TEST "Test/*.hpp")
-file(GLOB SOURCES_TEST  "Test/*.cpp")
-target_sources(NeuroTest PRIVATE ${INCLUDES_TEST})
-target_sources(NeuroTest PRIVATE ${SOURCES_TEST})
-
-target_link_libraries(NeuroTest NeuroRT)
-
-# Individual Unit Tests
+# Individual Unit Test Executables
+# Used together with a Node.js app because I'm sick of Microsoft's bullshit.
 
 # Generate NeuroRT unit tests
 file(GLOB ITEMS "Test/NeuroRT/*")

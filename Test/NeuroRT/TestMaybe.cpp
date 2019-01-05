@@ -7,8 +7,8 @@
 
 #include "Assert.hpp"
 #include "Maybe.hpp"
-#include "NeuroTestingFramework.hpp"
 #include "Numeric.hpp"
+#include "CLInterface.hpp"
 
 struct Foo {
 	int value;
@@ -24,7 +24,7 @@ struct Foo {
 	}
 };
 
-void TestNeuroMaybe() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;

@@ -7,9 +7,9 @@
 
 #include "Assert.hpp"
 #include "NeuroMap.hpp"
-#include "NeuroTestingFramework.hpp"
+#include "CLInterface.hpp"
 
-void TestNeuroMap() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;

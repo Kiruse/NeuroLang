@@ -8,8 +8,6 @@
 
 #include "NeuroObject.hpp"
 
-#include "GC/ManagedMemoryOverhead.hpp"
-
 namespace Neuro {
     namespace Runtime
     {
@@ -31,40 +29,17 @@ namespace Neuro {
         }
         
         
-        Object::Object(uint32 propCount) : props(getPropertyMapAddress(this)), propCount(propCount) {
-            // Works because neuroValueType::Undefined == 0.
+        Object::Object(Pointer self, uint32 propCount) : self(self), props(getPropertyMapAddress(this)), propCount(propCount) {
+            // Guaranteed to work because neuroValueType::Undefined == 0.
             std::memset(props, 0, sizeof(Property) * propCount);
         }
         
-        Object::Object(Pointer other, uint32 propCount) : props(getPropertyMapAddress(this)), propCount(propCount) {
-            const uint32 count = std::max<uint32>(other->length(), propCount);
-            uint32 added = 0;
-            for (auto& prop : *other) {
-                if (added++ >= count) break;
-                getProperty(Identifier::fromUID(prop.first)) = prop.second;
-            }
+        Object::Object(Pointer self, Pointer other) : self(self), props(getPropertyMapAddress(this)), propCount(other->propCount) {
+            copyProps(other);
         }
         
-        Object::Object(const Object& other) : props(getPropertyMapAddress(this)), propCount(other.propCount) {
-            // Copying is not quite as trivial as just setting bytes, as pointers
-            // to managed objects need to be resolved in case they have been
-            // relocated.
-            for (uint32 i = 0; i < propCount; ++i) {
-                props[i].first.store(other.props[i].first.load());
-                props[i].second = other.props[i].second;
-            }
-        }
-        
-        Object::Object(Object&& other) : props(getPropertyMapAddress(this)), propCount(other.propCount) {
-            // Moving like copying is not quite as trivial as moving bytes,
-            // because pointers to managed objects need to be resolved still.
-            for (uint32 i = 0; i < propCount; ++i) {
-                props[i].first.store(other.props[i].first.load());
-                props[i].second = other.props[i].second;
-            }
-            
-            // Call the move delegate for native code to react to.
-            onMove(&other);
+        Object::Object(Pointer self, Pointer other, uint32 newPropCount) : self(self), props(getPropertyMapAddress(this)), propCount(newPropCount) {
+            copyRehashProps(other);
         }
         
         Object::~Object() {
@@ -108,7 +83,7 @@ namespace Neuro {
             if (available) return available->second;
             
             // TODO: Somehow make upsizing object property maps more dynamic.
-            Pointer newObj = recreateObject(Pointer(GC::ManagedMemoryPointerBase::fromObject(this)), propCount + 1);
+            Pointer newObj = recreateObject(self, propCount + 1);
             return newObj->getProperty(id);
         }
         
@@ -134,6 +109,19 @@ namespace Neuro {
                 if (props[i].first) ++count;
             }
             return count;
+        }
+        
+        void Object::copyProps(Pointer other) {
+            std::memcpy(props, other->props, propCount * sizeof(Property));
+        }
+        
+        void Object::copyRehashProps(Pointer other) {
+            const uint32 count = std::max<uint32>(other->length(), propCount);
+            uint32 added = 0;
+            for (auto& prop : *other) {
+                if (added++ >= count) break;
+                getProperty(Identifier::fromUID(prop.first)) = prop.second;
+            }
         }
     }
 }

@@ -238,6 +238,9 @@ namespace Neuro
         
         StringBase& clear() {
             Buffer::clear();
+            for (uint32 i = 0; i < size(); ++i) {
+                get(i) = 0;
+            }
             return *this;
         }
         

@@ -225,6 +225,10 @@ namespace Neuro
             }
         }
         
+        // Noop, because RAII will automatically deal with it, but it's more
+        // convenient to have this method.
+        void destroy(uint32 index, uint32 count) {}
+        
         template<typename U = T>
         std::enable_if_t<std::is_assignable_v<T, const U&>> copy(uint32 index, const U* source, uint32 count) {
             if (m_data) {

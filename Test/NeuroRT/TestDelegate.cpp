@@ -7,7 +7,7 @@
 
 #include "Assert.hpp"
 #include "Delegate.hpp"
-#include "NeuroTestingFramework.hpp"
+#include "CLInterface.hpp"
 
 int foo(int num) {
     return num + 4;
@@ -38,7 +38,7 @@ public:
     }
 };
 
-void TestNeuroDelegate() {
+int main() {
     using namespace std;
     using namespace Neuro;
     using namespace Neuro::Testing;
