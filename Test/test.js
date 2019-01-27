@@ -103,6 +103,12 @@ function displayTreatedSectionResults(ctx, level = 0) {
         }
         
         console.log(`${color}${msg}\x1b[0m`);
+        
+        if (test.errors.length) {
+            for (let error of test.errors) {
+                console.log(`\x1b[31m${error}\x1b[0m`.indent(level + 2));
+            }
+        }
     })
 }
 
