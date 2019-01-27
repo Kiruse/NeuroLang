@@ -148,6 +148,10 @@ async function buildTest(argv) {
  */
 async function clean(argv) {
     await rimruf(path.resolve('./build'));
+    
+    let meta = await getBuildMeta();
+    meta.sources = [];
+    await writeBuildMeta(meta);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
