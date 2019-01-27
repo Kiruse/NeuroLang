@@ -151,9 +151,14 @@ namespace Neuro {
             
             // Attempt to find a section in an existing page.
             ManagedMemoryTablePage* lastPage = page = &firstPage;
-            do {
-                sectionIndex = findSectionForInsert(page, addr);
+            
+            // Check if first page has any available slot
+            sectionIndex = findSectionForInsert(page, addr);
+            
+            // Check if any other page has any available slot (if needed)
+            while (sectionIndex == npos && page) {
                 page = page->nextPage;
+                sectionIndex = findSectionForInsert(page, addr);
             } while (sectionIndex == npos && page);
             
             // Still not found?! Try to create a new page! But also consider concurrency...
@@ -184,8 +189,13 @@ namespace Neuro {
                 }
             }
             
-            // Return the section by pointer, for convenience.
-            section = &page->sections[sectionIndex];
+            if (page) {
+                // Return the section by pointer, for convenience.
+                section = &page->sections[sectionIndex];
+            }
+            else {
+                section = nullptr;
+            }
         }
         
         uint32 ManagedMemoryTable::findSectionForInsert(ManagedMemoryTablePage* page, ManagedMemoryOverhead* newAddr) {

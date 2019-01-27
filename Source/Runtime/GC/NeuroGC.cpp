@@ -351,8 +351,8 @@ namespace Neuro {
             // Actually allocate the buffer.
             auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
             
-            // Populate the overhead with meta data.
-            ManagedMemoryOverhead::init(head, size);
+            // Create the overhead & initialize with data
+            new (head) ManagedMemoryOverhead(size);
             
             // Return a managed pointer wrapper.
             return GCGlobals::dataTable.addPointer(head);
@@ -364,8 +364,8 @@ namespace Neuro {
             // Actually allocate the buffer.
             auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstNonTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
             
-            // Populate the overhead with meta data.
-            ManagedMemoryOverhead::init(head, size);
+            // Create the overhead & populate with data
+            new (head) ManagedMemoryOverhead(size);
             copyDelegate.copyTo(&head->copyDelegate.get());
             destroyDelegate.copyTo(&head->destroyDelegate.get());
             

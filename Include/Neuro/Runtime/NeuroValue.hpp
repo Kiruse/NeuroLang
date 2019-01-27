@@ -230,9 +230,10 @@ namespace Neuro
         
     protected:
         void clearManagedPointer() {
-            if (m_type == NVT_Object) {
-                m_objectValue.clear();
-            }
+            // This used to be relevant
+            // if (m_type == NVT_Object) {
+            //     m_objectValue.clear();
+            // }
         }
         
     public:

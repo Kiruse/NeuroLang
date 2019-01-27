@@ -52,10 +52,36 @@ namespace Neuro {
             Maybe<Delegate<void, void*>> destroyDelegate;
             
             
-            static void init(ManagedMemoryOverhead* inst, uint32 elementSize, uint32 count = 1) {
-                inst->elementSize = elementSize;
-                inst->count = count;
-                inst->garbageState = EGarbageState::Live;
+            ManagedMemoryOverhead() = default;
+            ManagedMemoryOverhead(uint32 elementSize, uint32 count = 1) : elementSize(elementSize), count(count), garbageState(EGarbageState::Live) {}
+            
+            /**
+             * Gets the number of bytes in the subsequent memory buffer.
+             */
+            uint32 getBufferBytes() const {
+                return elementSize * count;
+            }
+            
+            /**
+             * Gets the number of bytes that this represented memory region
+             * including the overhead itself and its subsequent buffer occupy.
+             */
+            uint32 getTotalBytes() const {
+                return sizeof(ManagedMemoryOverhead) + getBufferBytes();
+            }
+            
+            /**
+             * Gets a pointer to the buffer start address for convenience.
+             */
+            void* getBufferPointer() const {
+                return const_cast<void*>(reinterpret_cast<const void*>(this + 1));
+            }
+            
+            /**
+             * Gets a pointer to the address immediately after the memory buffer.
+             */
+            void* getBeyondPointer() const {
+                return (uint8*)getBufferPointer() + elementSize * count;
             }
         };
     }

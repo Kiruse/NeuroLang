@@ -93,8 +93,14 @@ namespace Neuro {
          * memory. The ManagedMemoryPointerBase refers to such a table's row
          * by index.
          */
-        class ManagedMemoryTable
+        class NEURO_API ManagedMemoryTable
         {
+#pragma warning(push)
+
+// [...] needs to have dll-interface to be used by clients of [...]
+// These are private anyway. Clients are not intended to be using these to begin with.
+#pragma warning(disable: 4251)
+
             /**
              * First page in this table.
              */
@@ -105,6 +111,8 @@ namespace Neuro {
              */
             std::atomic<uint32> uidsalt;
             
+#pragma warning(pop)
+            
         public:
             ManagedMemoryTable();
             
@@ -113,6 +121,15 @@ namespace Neuro {
              * to the table, and returns a managed memory pointer.
              */
             ManagedMemoryPointerBase addPointer(ManagedMemoryOverhead* addr);
+            
+            /**
+             * Templated version of addPointer which returns a templated
+             * ManagedMemoryPointer wrapping the same type, for convenience.
+             */
+            template<typename T>
+            ManagedMemoryPointer<T> addCastPointer(ManagedMemoryOverhead* addr) {
+                return addPointer(addr);
+            }
             
             /**
              * Replaces the underlying address of the given managed memory pointer

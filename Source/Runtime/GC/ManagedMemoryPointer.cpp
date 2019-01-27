@@ -3,6 +3,8 @@
 // -----
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
+#include <cassert>
+
 #include "GC/NeuroGC.hpp"
 #include "GC/ManagedMemoryOverhead.hpp"
 #include "GC/ManagedMemoryPointer.hpp"
@@ -16,16 +18,20 @@ namespace Neuro {
             extern ManagedMemoryTable dataTable;
         }
         
-        void* ManagedMemoryPointerBase::get() const {
-            return GCGlobals::dataTable.get(*this);
-        }
+        ManagedMemoryTable* managedMemoryPointer_UseTable = &GCGlobals::dataTable;
         
-        void ManagedMemoryPointerBase::clear() {
-            
+        void* ManagedMemoryPointerBase::get(uint32 index) const {
+            auto* head = getHeadPointer();
+			assert(!!head);
+			return (uint8*)(head->getBufferPointer()) + head->elementSize * index;
         }
         
         ManagedMemoryOverhead* ManagedMemoryPointerBase::getHeadPointer() const {
-            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(get()) - sizeof(ManagedMemoryOverhead));
+            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(managedMemoryPointer_UseTable->get(*this)) - sizeof(ManagedMemoryOverhead));
+        }
+        
+        void ManagedMemoryPointerBase::useOverheadLookupTable(ManagedMemoryTable* table) {
+            managedMemoryPointer_UseTable = table;
         }
     }
 }

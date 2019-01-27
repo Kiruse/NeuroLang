@@ -58,10 +58,9 @@ namespace Neuro {
             
         public:
             ManagedMemoryPointerBase() : tableIndex(npos), rowuid(0) {}
-            ~ManagedMemoryPointerBase() { clear(); }
+            ~ManagedMemoryPointerBase() {}
             
-            void* get() const;
-            void clear();
+            void* get(uint32 index = 0) const;
             
             bool operator==(const ManagedMemoryPointerBase& other) const { return tableIndex == other.tableIndex; }
             bool operator!=(const ManagedMemoryPointerBase& other) const { return !(*this == other); }
@@ -70,18 +69,28 @@ namespace Neuro {
             
         private:
             ManagedMemoryOverhead* getHeadPointer() const;
+            
+        public:
+            /**
+             * Sets the global table to use to lookup associated ManagedMemoryOverhead's.
+             * 
+             * Intended for testing. Normally a default global table already
+             * exists.
+             */
+            static void useOverheadLookupTable(ManagedMemoryTable* table);
         };
         
         template<typename T>
-        class ManagedMemoryPointer : public ManagedMemoryPointerBase {
+        class NEURO_API ManagedMemoryPointer : public ManagedMemoryPointerBase {
         public:
             ManagedMemoryPointer() = default;
             ManagedMemoryPointer(ManagedMemoryPointerBase other) : ManagedMemoryPointerBase(other) {}
             
-            T* get() const { return reinterpret_cast<T* const>(ManagedMemoryPointerBase::get()); }
+            T* get(uint32 index = 0) const { return reinterpret_cast<T* const>(ManagedMemoryPointerBase::get(index)); }
             
             T& operator*() const { return *get(); }
             T* operator->() const { return get(); }
+            T& operator[](uint32 index) const { return *get(index); }
         };
     }
     

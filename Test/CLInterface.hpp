@@ -16,6 +16,12 @@ namespace Neuro {
     {
         using ResultCallback = Delegate<void>;
         
+        class AssertionException : public Exception {
+        public:
+            AssertionException() : Exception("AssertionException", "Assertion failed") {}
+            AssertionException(const std::string& message) : Exception("AssertionException", message) {}
+        };
+        
         void error(const String& message) {
             std::cout << "error " << message << std::endl;
         }
@@ -107,6 +113,10 @@ namespace Neuro {
             }
             
             tst.leave();
+        }
+        
+        void assert(bool truthy, const String& message) {
+            if (!truthy) throw new AssertionException(message.c_str());
         }
     }
 }
