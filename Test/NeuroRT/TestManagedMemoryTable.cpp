@@ -4,17 +4,18 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include <cstdlib>
 
-#include "GC/ManagedMemoryTable.hpp"
 #include "CLInterface.hpp"
+#include "GC/ManagedMemoryTable.hpp"
+#include "NeuroBuffer.hpp"
 
 using namespace Neuro;
 using namespace Neuro::Runtime;
 
 ManagedMemoryTable gTable;
 uint8* gpMainBuffer;
-uint8* gpBuffer1;
-uint8* gpBuffer2;
+uint8* gpBufferOther;
 uint32 gCursor = 0;
+uint32 gCursorOther;
 
 
 template<typename T>
@@ -24,90 +25,76 @@ ManagedMemoryOverhead* allocateBuffer(uint32 count) {
     return head;
 }
 
+void swapBuffer() {
+    uint8* tmpBuffer = gpMainBuffer;
+    gpMainBuffer = gpBufferOther;
+    gpBufferOther = tmpBuffer;
+    
+    uint32 tmpCursor = gCursor;
+    gCursor = gCursorOther;
+    gCursorOther = tmpCursor;
+}
+
 
 int main() {
     ManagedMemoryPointerBase::useOverheadLookupTable(&gTable);
     
-    gpMainBuffer = gpBuffer1 = (uint8*)std::malloc(1024);
-    gpBuffer2 = (uint8*)std::malloc(1024);
-    
-    ManagedMemoryOverhead* headScalar,
-                         * headSmallArray,
-                         * headLargeArray,
-                         * headVector3f,
-                         * headVector4d;
-    
-    ManagedMemoryPointer<int32>  ptrScalar;
-    ManagedMemoryPointer<int32>  ptrSmallArray;
-    ManagedMemoryPointer<int32>  ptrLargeArray;
-    ManagedMemoryPointer<float>  ptrVector3f;
-    ManagedMemoryPointer<double> ptrVector4d;
+    gpMainBuffer = (uint8*)std::malloc(1024);
+    gpBufferOther = (uint8*)std::malloc(1024);
     
     Testing::section("ManagedMemoryTable", [&]() {
-        Testing::test("Scalar int", [&]() {
-            headScalar = allocateBuffer<int32>(1);
-            ptrScalar = gTable.addCastPointer<int32>(headScalar);
-            *ptrScalar = 42;
-            
-            Testing::assert(*((int32*)headScalar->getBufferPointer()) == 42, "Failed to write scalar int32");
+        Testing::test("Insert", [&]() {
+            auto head = allocateBuffer<int32>(1);
+            auto ptr = gTable.addCastPointer<int32>(head);
+            Testing::assert(ptr.get() == head->getBufferPointer(), "Failed to properly insert into table");
         });
         
-        Testing::test("10-int array", [&]() {
-            headSmallArray = allocateBuffer<int32>(10);
-            ptrSmallArray = gTable.addCastPointer<int32>(headSmallArray);
+        Testing::test("Replace", [&]() {
+            constexpr int32 count = 4;
+            auto head = allocateBuffer<int32>(count);
+            auto ptr = gTable.addCastPointer<int32>(head);
+            Buffer<void*> dataPointers(count); // Pointers to data in first buffer for comparison later
             
-            for (uint32 i = 0; i < 10; ++i) {
-                ptrSmallArray[i] = i;
+            // Populate first buffer with data
+            for (uint32 i = 0; i < count; ++i) {
+                ptr[i] = i;
+                dataPointers.add(ptr.get(i));
             }
             
-            uint32* ptr = (uint32*)headSmallArray->getBufferPointer();
-            for (uint32 i = 0; i < 10; ++i) {
-                Testing::assert(ptr[i] == i, "Failed to write to small int32 array");
+            for (uint32 i = 0; i < count; ++i) {
+                Testing::assert(*((uint8*)head->getBufferPointer() + sizeof(int32) * i) == i, "Failed to write value");
             }
+            
+            // Migrate to buffer 2
+            
+            swapBuffer();
+            
+            head = allocateBuffer<int32>(count);
+            gTable.replacePointer(ptr, head);
+            
+            for (uint32 i = 0; i < count; ++i) {
+                ptr[i] = i + 2;
+            }
+            
+            for (uint32 i = 0; i < count; ++i) {
+                Testing::assert(*((uint8*)head->getBufferPointer() + sizeof(int32) * i) == i + 2, "Failed to overwrite value");
+                Testing::assert(ptr.get() != dataPointers[i], "Table pointing to old data");
+            }
+            
+            // Revert to original buffer
+            
+            swapBuffer();
         });
         
-        Testing::test("42-int array", [&]() {
-            headLargeArray = allocateBuffer<int32>(42);
-            ptrLargeArray = gTable.addCastPointer<int32>(headLargeArray);
+        Testing::test("Remove", [&]() {
+            auto head = allocateBuffer<int32>(1);
+            auto ptr = gTable.addCastPointer<int32>(head);
             
-            for (uint32 i = 0; i < 42; ++i) {
-                ptrLargeArray[i] = i;
-            }
+            Testing::assert(ptr.get() == head->getBufferPointer(), "Failed to insert into table (prerequisite)");
             
-            uint32* ptr = (uint32*)headLargeArray->getBufferPointer();
-            for (uint32 i = 0; i < 42; ++i) {
-                Testing::assert(ptr[i] == i, "Failed to write to large int32 array");
-            }
-        });
-        
-        Testing::test("3-float vector", [&]() {
-            headVector3f = allocateBuffer<float>(3);
-            ptrVector3f = gTable.addCastPointer<float>(headVector3f);
+            gTable.removePointer(ptr);
             
-            ptrVector3f[0] = 1;
-            ptrVector3f[1] = 2;
-            ptrVector3f[2] = 3;
-            
-            float* ptr = (float*)headVector3f->getBufferPointer();
-            Testing::assert(ptr[0] == 1, "Failed to write to vector3f");
-            Testing::assert(ptr[1] == 2, "Failed to write to vector3f");
-            Testing::assert(ptr[2] == 3, "Failed to write to vector3f");
-        });
-        
-        Testing::test("4-double vector", [&]() {
-            headVector4d = allocateBuffer<double>(4);
-            ptrVector4d = gTable.addCastPointer<double>(headVector4d);
-            
-            ptrVector4d[0] = 1;
-            ptrVector4d[1] = 2;
-            ptrVector4d[2] = 3;
-            ptrVector4d[3] = 4;
-            
-            double* ptr = (double*)headVector4d->getBufferPointer();
-            Testing::assert(ptr[0] == 1, "Failed to write to vector4d");
-            Testing::assert(ptr[1] == 2, "Failed to write to vector4d");
-            Testing::assert(ptr[2] == 3, "Failed to write to vector4d");
-            Testing::assert(ptr[3] == 4, "Failed to write to vector4d");
+            Testing::assert(ptr.get() == nullptr, "Failed to remove from table");
         });
     });
 }

@@ -22,12 +22,14 @@ namespace Neuro {
         
         void* ManagedMemoryPointerBase::get(uint32 index) const {
             auto* head = getHeadPointer();
-			assert(!!head);
+            if (!head) return nullptr;
 			return (uint8*)(head->getBufferPointer()) + head->elementSize * index;
         }
         
         ManagedMemoryOverhead* ManagedMemoryPointerBase::getHeadPointer() const {
-            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(managedMemoryPointer_UseTable->get(*this)) - sizeof(ManagedMemoryOverhead));
+            void* buffer = managedMemoryPointer_UseTable->get(*this);
+            if (!buffer) return nullptr;
+            return reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(buffer) - sizeof(ManagedMemoryOverhead));
         }
         
         void ManagedMemoryPointerBase::useOverheadLookupTable(ManagedMemoryTable* table) {
