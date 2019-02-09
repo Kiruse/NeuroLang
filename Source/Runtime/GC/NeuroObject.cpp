@@ -5,12 +5,40 @@
 // License: GPL 3.0
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 
 #include "NeuroObject.hpp"
+#include "GC/NeuroGC.hpp"
 
 namespace Neuro {
     namespace Runtime
     {
+        ////////////////////////////////////////////////////////////////////////
+        // Imported GC globals
+        
+        namespace GCGlobals
+        {
+            extern std::mutex rootsMutex;
+            extern Buffer<Pointer> roots;
+        }
+        
+        
+        ////////////////////////////////////////////////////////////////////////
+        // Local forward declarations
+        
+        void rootObjectInternal(Object* inst);
+        void unrootObjectInternal(Object* inst);
+        
+        
+        ////////////////////////////////////////////////////////////////////////
+        // Delegates
+        
+        SinglecastDelegate<Pointer, uint32>          createObjectDeleg   = Object::CreateObjectDelegate::FunctionDelegate<Object::defaultCreateObject>();
+        SinglecastDelegate<Pointer, Pointer, uint32> recreateObjectDeleg = Object::RecreateObjectDelegate::FunctionDelegate<Object::defaultRecreateObject>();
+        SinglecastDelegate<void, Object*>            rootDeleg           = Object::RootObjectDelegate::FunctionDelegate<rootObjectInternal>();
+        SinglecastDelegate<void, Object*>            unrootDeleg         = Object::UnrootObjectDelegate::FunctionDelegate<unrootObjectInternal>();
+        
+        
         uint32 cycleBits(uint32 number, uint32 bits) {
             static constexpr uint32 uint32bits = sizeof(uint32) * 8;
             
@@ -122,6 +150,101 @@ namespace Neuro {
                 if (added++ >= count) break;
                 getProperty(Identifier::fromUID(prop.first)) = prop.second;
             }
+        }
+        
+        
+        void Object::root() {
+            rootDeleg(this);
+        }
+        
+        void rootObjectInternal(Object* inst) {
+            std::scoped_lock{GCGlobals::rootsMutex};
+            GCGlobals::roots.add(inst->getPointer());
+        }
+        
+        void Object::unroot() {
+            unrootDeleg(this);
+        }
+        
+        void unrootObjectInternal(Object* inst) {
+            std::scoped_lock{GCGlobals::rootsMutex};
+            GCGlobals::roots.remove(inst->getPointer());
+        }
+        
+        void Object::useDefaultCreateObjectDelegate() {
+            createObjectDeleg = CreateObjectDelegate::FunctionDelegate<Object::defaultCreateObject>();
+        }
+        
+        void Object::useDefaultRecreateObjectDelegate() {
+            recreateObjectDeleg = RecreateObjectDelegate::FunctionDelegate<Object::defaultRecreateObject>();
+        }
+        
+        void Object::useDefaultRootObjectDelegate() {
+            rootDeleg = RootObjectDelegate::FunctionDelegate<rootObjectInternal>();
+        }
+        
+        void Object::useDefaultUnrootObjectDelegate() {
+            unrootDeleg = UnrootObjectDelegate::FunctionDelegate<unrootObjectInternal>();
+        }
+        
+        void Object::setCreateObjectDelegate(const Object::CreateObjectDelegate& deleg) {
+            createObjectDeleg = deleg;
+        }
+        
+        void Object::setRecreateObjectDelegate(const Object::RecreateObjectDelegate& deleg) {
+            recreateObjectDeleg = deleg;
+        }
+        
+        void Object::setRootDelegate(const Object::RootObjectDelegate& deleg) {
+            rootDeleg = deleg;
+        }
+        
+        void Object::setUnrootDelegate(const Object::UnrootObjectDelegate& deleg) {
+            unrootDeleg = deleg;
+        }
+        
+        
+        Pointer Object::createObject(uint32 knownPropsCount) {
+            return createObjectDeleg(knownPropsCount);
+        }
+        
+        Pointer Object::defaultCreateObject(uint32 knownPropsCount) {
+            return genericCreateObject(AllocationDelegate::FunctionDelegate<GC::allocateTrivial>(), knownPropsCount);
+        }
+        
+        Pointer Object::genericCreateObject(const AllocationDelegate& alloc, uint32 knownPropsCount) {
+            // TODO: Determine algorithm for prop buffer count
+            const uint32 totalPropsCount = knownPropsCount + 10;
+            
+            auto rawptr = alloc(sizeof(Object) + sizeof(Property) * totalPropsCount);
+            if (!rawptr) return Pointer();
+            
+            Pointer self(rawptr);
+            new (self.get()) Object(self, totalPropsCount);
+            return self;
+        }
+        
+        Pointer Object::recreateObject(Pointer object, uint32 knownPropsCount) {
+            return recreateObjectDeleg(object, knownPropsCount);
+        }
+        
+        Pointer Object::defaultRecreateObject(Pointer object, uint32 knownPropsCount) {
+            return genericRecreateObject(AllocationDelegate::FunctionDelegate<GC::allocateTrivial>(), object, knownPropsCount);
+        }
+        
+        Pointer Object::genericRecreateObject(const AllocationDelegate& alloc, Pointer object, uint32 knownPropsCount) {
+            // TODO: Determine algorithm for prop buffer count
+            const uint32 totalPropsCount = knownPropsCount + 10;
+            
+            // Only recreate if we're actually resizing!
+            if (totalPropsCount == object->propCount) return object;
+            
+            auto rawptr = alloc(sizeof(Object) + sizeof(Property) * totalPropsCount);
+            if (!rawptr) return Pointer();
+            
+            Pointer self(rawptr);
+            new (self.get()) Object(self, object, totalPropsCount);
+            return self;
         }
     }
 }

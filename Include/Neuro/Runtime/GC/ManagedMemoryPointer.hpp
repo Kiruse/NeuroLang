@@ -19,9 +19,6 @@
 // License: GPL 3.0
 #pragma once
 
-#include <atomic>
-#include <memory>
-
 #include "DLLDecl.h"
 #include "Delegate.hpp"
 #include "HashCode.hpp"

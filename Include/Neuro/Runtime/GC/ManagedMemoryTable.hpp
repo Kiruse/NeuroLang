@@ -24,6 +24,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "DLLDecl.h"
 #include "Error.hpp"
 #include "ManagedMemoryPointer.hpp"

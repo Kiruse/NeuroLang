@@ -639,47 +639,6 @@ namespace Neuro {
             GCGlobals::scanners += scanner;
             return NoError::instance();
         }
-        
-        
-        ////////////////////////////////////////////////////////////////////////
-        // Neuro::Object methods with direct 
-        ////////////////////////////////////////////////////////////////////////
-        
-        void Object::root() {
-            std::scoped_lock{GCGlobals::rootsMutex};
-            GCGlobals::roots.add(self);
-        }
-        
-        void Object::unroot() {
-            std::scoped_lock{GCGlobals::rootsMutex};
-            GCGlobals::roots.remove(self);
-        }
-        
-        Pointer Object::createObject(uint32 knownPropsCount, uint32 propsBufferCount) {
-            // TODO: Possibly alter propsBufferCount before we allocate.
-            const uint32 totalPropsCount = knownPropsCount + propsBufferCount;
-            
-            auto rawptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
-            if (!rawptr) return Pointer();
-            
-            Pointer self(rawptr);
-            new (self.get()) Object(self, totalPropsCount);
-            return self;
-        }
-        
-        Pointer Object::recreateObject(Pointer object, uint32 knownPropsCount, uint32 propsBufferCount) {
-            const uint32 totalPropsCount = knownPropsCount + propsBufferCount;
-            
-            // Only recreate if we're actually resizing!
-            if (totalPropsCount == object->propCount) return object;
-            
-            auto rawptr = GC::allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount);
-            if (!rawptr) return Pointer();
-            
-            Pointer self(rawptr);
-            new (self.get()) Object(self, object, totalPropsCount);
-            return self;
-        }
     }
 }
 

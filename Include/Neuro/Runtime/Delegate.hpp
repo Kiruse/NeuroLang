@@ -173,6 +173,49 @@ namespace Neuro
     };
     
     /**
+     * A wrapper around a single delegate for more convenient use.
+     * 
+     * The inconvenience about the regular Delegate is that the class has a pure
+     * operator() which needs explicit knowledge of the exact implementation.
+     * The MulticastDelegate circumvents this necessity through adequate amounts
+     * of black magic to allow us to call delegates of any implementation. The
+     * SinglecastDelegate makes use of the same black magic to allow us to call
+     * and assign any specialization to a generic wrapper while using it like
+     * any other delegate.
+     */
+    template<typename ReturnType, typename... Args>
+    class NEURO_API SinglecastDelegate {
+        uint8 buffer[sizeof(DelegateBase)];
+        
+    public:
+        SinglecastDelegate(const Delegate<ReturnType, Args...>& deleg) {
+            deleg.copyTo(reinterpret_cast<DelegateBase*>(&buffer));
+        }
+        SinglecastDelegate& operator=(const Delegate<ReturnType, Args...>& deleg) {
+            deleg.copyTo(reinterpret_cast<DelegateBase*>(&buffer));
+            return *this;
+        }
+        
+        ReturnType operator()(Args... args) const {
+            auto real = reinterpret_cast<const Delegate<ReturnType, Args...>*>(&buffer);
+            return (*real)(std::forward<Args>(args)...);
+        }
+        
+        Delegate<ReturnType, Args...>& getDelegate() {
+            return *reinterpret_cast<Delegate<ReturnType, Args...>*>(&buffer);
+        }
+        const Delegate<ReturnType, Args...>& getDelegate() const {
+            return *reinterpret_cast<const Delegate<ReturnType, Args...>*>(&buffer);
+        }
+        operator Delegate<ReturnType, Args...>&() {
+            return getDelegate();
+        }
+        operator const Delegate<ReturnType, Args...>&() const {
+            return getDelegate();
+        }
+    };
+    
+    /**
      * A specialized allocator specifically designed for the MulticastDelegate's
      * internal buffer.
      */

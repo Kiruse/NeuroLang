@@ -5,6 +5,7 @@
 // License: GPL 3.0
 #pragma once
 
+#include <atomic>
 #include <utility>
 
 #include "DLLDecl.h"
@@ -35,7 +36,15 @@ namespace Neuro {
          * Managed, classless, generic object.
          */
         class NEURO_API Object {
+            friend class ::Neuro::Runtime::GC;
+            
         public: // Types
+            using CreateObjectDelegate = Delegate<Pointer, uint32>;
+            using RecreateObjectDelegate = Delegate<Pointer, Pointer, uint32>;
+            using RootObjectDelegate = Delegate<void, Object*>;
+            using UnrootObjectDelegate = Delegate<void, Object*>;
+            using AllocationDelegate = Delegate<ManagedMemoryPointerBase, uint32>;
+            
             template<bool Mutable>
             class PropertyIterator {
             public:
@@ -122,7 +131,7 @@ namespace Neuro {
             // Destruction is reserved to the Garbage Collector!
             ~Object();
             
-        public:
+        public: // Methods
             /**
              * Get the (mutable) value of this object's property identified by
              * the Identifier.
@@ -171,6 +180,11 @@ namespace Neuro {
              */
             uint32 capacity() const { return propCount; }
             
+            /**
+             * Gets managed pointer to self.
+             */
+            Pointer getPointer() const { return self; }
+            
         private: // Internal helpers
             /**
              * Simple case of special move construction where the number of
@@ -208,21 +222,92 @@ namespace Neuro {
              */
             EventDelegate<> onDestroy;
             
-        public: // Static Object Management
-                // Like root() and unroot(), these are found in NeuroGC.cpp
+        public: // External dependencies (delegates & statics)
             
             /**
-             * Create a new managed, generic object. Manipulate the object through
-             * the class directly.
+             * Resets the delegate used by the createObject static method to its
+             * default.
              */
-            static Pointer createObject(uint32 knownPropsCount, uint32 propsBufferCount = 20);
+            static void useDefaultCreateObjectDelegate();
+            
+            /**
+             * Resets the delegate used by the recreateObject static method to
+             * its default.
+             */
+            static void useDefaultRecreateObjectDelegate();
+            
+            /**
+             * Resets the delegate used by the root method to its default.
+             */
+            static void useDefaultRootObjectDelegate();
+            
+            /**
+             * Resets the delegate used by the unroot method to its default.
+             */
+            static void useDefaultUnrootObjectDelegate();
+            
+            /**
+             * Sets the delegate used by the createObject static method.
+             */
+            static void setCreateObjectDelegate(const CreateObjectDelegate& deleg);
+            
+            /**
+             * Sets the delegate used by the recreateObject static method.
+             */
+            static void setRecreateObjectDelegate(const RecreateObjectDelegate& deleg);
+            
+            /**
+             * Sets the delegate used by the root method.
+             */
+            static void setRootDelegate(const RootObjectDelegate& deleg);
+            
+            /**
+             * Sets the delegate used by the unroot method.
+             */
+            static void setUnrootDelegate(const UnrootObjectDelegate& deleg);
+            
+            /**
+             * Create an entirely new object using an arbitrary algorithm
+             * determined by `useCreateObjectDelegate`.
+             */
+            static Pointer createObject(uint32 knownPropsCount);
+            
+            /**
+             * Create a new managed, generic object. Manipulate the object
+             * through the class directly.
+             */
+            static Pointer defaultCreateObject(uint32 knownPropsCount);
+            
+            /**
+             * Create a new generic object in a custom memory region as
+             * determined by the allocation delegate.
+             * 
+             * Useful to slightly alter the behavior of the defaultCreateObject
+             * method.
+             */
+            static Pointer genericCreateObject(const AllocationDelegate& allocDeleg, uint32 knownPropsCount);
+            
+            /**
+             * Recreate an object based on another, resizing its property map
+             * in the process. Uses an arbitrary algorithm determined by
+             * `useRecreateObjectDelegate`.
+             */
+            static Pointer recreateObject(Pointer object, uint32 knownPropsCount);
             
             /**
              * Create a new managed, generic object from the given object, down-
-             * ur upsizing its property map, marking the old object as garbage
-             * and sweeping it soon thereafter.
+             * or upsizing its property map.
              */
-            static Pointer recreateObject(Pointer object, uint32 knownPropsCount, uint32 propsBufferCount = 10);
+            static Pointer defaultRecreateObject(Pointer object, uint32 knownPropsCount);
+            
+            /**
+             * Creates a new object from the given object in a custom memory
+             * region as determined by the allocation delegate.
+             * 
+             * Useful to slightly alter the behavior of the defaultRecreateObject
+             * method.
+             */
+            static Pointer genericRecreateObject(const AllocationDelegate& allocDeleg, Pointer object, uint32 knownPropsCount);
         };
     }
 }
