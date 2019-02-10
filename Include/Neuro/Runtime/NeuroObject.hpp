@@ -141,6 +141,18 @@ namespace Neuro {
             Value& getProperty(Identifier id);
             
             /**
+             * Get the (mutable) value of this object's property by name.
+             * If the property has not been found, it will be created and assume
+             * the default value "undefined".
+             * 
+             * Because this uses Identifier::lookup every time, it's likely more
+             * efficient to use getProperty(Identifier) directly.
+             */
+            Value& getProperty(const String& name) {
+                return getProperty(Identifier::lookup(name));
+            }
+            
+            /**
              * Get the (immutable) value of this object's property identified by
              * the Identifier.
              * Unlike the non-const version of this function, if the property
@@ -148,6 +160,20 @@ namespace Neuro {
              * Value::undefined is returned.
              */
             const Value& getProperty(Identifier id) const;
+            
+            /**
+             * Get the (immutable) value of this object's property identified by
+             * the Identifier.
+             * Unlike the non-const version of this function, if the property
+             * was not found, it will not be created. Instead, a reference to
+             * Value::undefined is returned.
+             * 
+             * Because this uses Identifier::lookup every time, it's likely more
+             * efficient to use getProperty(Identifier) directly.
+             */
+            const Value& getProperty(const String& name) const {
+                return getProperty(Identifier::lookup(name));
+            }
             
             /**
              * Admittingly rather useless alias for `getProperty()`.
