@@ -16,17 +16,18 @@
 
 
 #define DECLARE_NEURO_ERROR(ErrorName) \
-    class ErrorName##Error : public Error { \
+    class NEURO_API ErrorName##Error : public Error { \
     private: \
         static const ErrorName##Error m_inst; \
         ErrorName##Error(); \
     public: \
-        static inline const ErrorName##Error& instance() { return m_inst; } \
+        static const ErrorName##Error& instance(); \
     };
 
 #define DEFINE_NEURO_ERROR(ErrorName, ErrorCode, ErrorMessage) \
     const ErrorName##Error ErrorName##Error::m_inst; \
-    ErrorName##Error::##ErrorName##Error() : Error(ErrorCode, #ErrorName, ErrorMessage) {}
+    ErrorName##Error::##ErrorName##Error() : Error(ErrorCode, #ErrorName, ErrorMessage) {} \
+    const ErrorName##Error& ErrorName##Error::instance() { return m_inst; }
 
 namespace Neuro {
     class NEURO_API Error {

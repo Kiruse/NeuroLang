@@ -6,95 +6,158 @@
 
 #include "CLInterface.hpp"
 #include "GC/ManagedMemoryTable.hpp"
+#include "GC/NeuroGC.hpp"
 #include "NeuroBuffer.hpp"
 
 using namespace Neuro;
 using namespace Neuro::Runtime;
 
-ManagedMemoryTable gTable;
-uint8* gpMainBuffer;
-uint8* gpBufferOther;
-uint32 gCursor = 0;
-uint32 gCursorOther;
 
-
-template<typename T>
-ManagedMemoryOverhead* allocateBuffer(uint32 count) {
-    auto head = new (gpMainBuffer + gCursor) ManagedMemoryOverhead(sizeof(T), count);
-    gCursor += head->getTotalBytes();
-    return head;
-}
-
-void swapBuffer() {
-    uint8* tmpBuffer = gpMainBuffer;
-    gpMainBuffer = gpBufferOther;
-    gpBufferOther = tmpBuffer;
+class FakeGC : public GCInterface {
+public:
+    ManagedMemoryTable dataTable;
+    uint8* mainBuffer;
+    uint8* otherBuffer;
+    uint32 cursor;
+    uint32 otherCursor;
     
-    uint32 tmpCursor = gCursor;
-    gCursor = gCursorOther;
-    gCursorOther = tmpCursor;
-}
+public: // RAII
+    FakeGC()
+     : dataTable()
+     , mainBuffer(new uint8[1024])
+     , otherBuffer(new uint8[1024])
+     , cursor(0)
+     , otherCursor(0)
+    {}
+    
+    FakeGC(const FakeGC&) = delete;
+    FakeGC(FakeGC&&) = delete;
+    FakeGC& operator=(const FakeGC&) = delete;
+    FakeGC& operator=(FakeGC&&) = delete;
+    
+    ~FakeGC() {
+        delete mainBuffer;
+        delete otherBuffer;
+    }
+    
+    
+public: // GCInterface
+    virtual ManagedMemoryPointerBase allocateTrivial(uint32 elementSize, uint32 count) override {
+        auto head = new (mainBuffer + cursor) ManagedMemoryOverhead(elementSize, count);
+        cursor += head->getTotalBytes();
+        return dataTable.addPointer(head);
+    }
+    
+    virtual ManagedMemoryPointerBase allocateNonTrivial(uint32 elementSize, uint32 count, const Delegate<void, void*, const void*>& copyDeleg, const Delegate<void, void*>& destroyDeleg) override {
+        auto head = new (mainBuffer + cursor) ManagedMemoryOverhead(elementSize, count);
+        copyDeleg.copyTo(&head->copyDelegate.get());
+        destroyDeleg.copyTo(&head->destroyDelegate.get());
+        cursor += head->getTotalBytes();
+        return dataTable.addPointer(head);
+    }
+    
+    virtual Error root(Pointer obj) override {
+        // Fake GC doesn't scan, so no roots
+        return NoError::instance();
+    }
+    
+    virtual Error unroot(Pointer obj) override {
+        // Fake GC doesn't scan, so no roots
+        return NoError::instance();
+    }
+    
+    virtual void* resolve(ManagedMemoryPointerBase pointer) override {
+        return dataTable.get(pointer);
+    }
+
+public: // Methods
+    template<typename T>
+    ManagedMemoryPointer<T> alloc(uint32 count = 1) {
+        return allocateTrivial(sizeof(T), count);
+    }
+    
+    void swapBuffer() {
+        uint8* tmpBuffer = mainBuffer;
+        mainBuffer = otherBuffer;
+        otherBuffer = tmpBuffer;
+        
+        uint32 tmpCursor = cursor;
+        cursor = otherCursor;
+        otherCursor = tmpCursor;
+    }
+    
+    void updatePointer(ManagedMemoryPointerBase updateMe, ManagedMemoryPointerBase updateWith) {
+        dataTable.replacePointer(updateMe, GC::getOverhead(updateWith));
+    }
+    
+    void removePointer(ManagedMemoryPointerBase ptr) {
+        dataTable.removePointer(ptr);
+    }
+    
+    ManagedMemoryOverhead* getCursorPointer() const {
+        return reinterpret_cast<ManagedMemoryOverhead*>(mainBuffer + cursor);
+    }
+};
 
 
 int main() {
-    ManagedMemoryPointerBase::useOverheadLookupTable(&gTable);
-    
-    gpMainBuffer = (uint8*)std::malloc(1024);
-    gpBufferOther = (uint8*)std::malloc(1024);
+    auto gc = new FakeGC();
+    GC::init(gc);
     
     Testing::section("ManagedMemoryTable", [&]() {
         Testing::test("Insert", [&]() {
-            auto head = allocateBuffer<int32>(1);
-            auto ptr = gTable.addCastPointer<int32>(head);
-            Testing::assert(ptr.get() == head->getBufferPointer(), "Failed to properly insert into table");
+            auto head = gc->getCursorPointer();
+            auto ptr = gc->alloc<int32>();
+            Testing::assert((void*)ptr.get() == head->getBufferPointer(), "Failed to properly insert into table");
         });
         
         Testing::test("Replace", [&]() {
             constexpr int32 count = 4;
-            auto head = allocateBuffer<int32>(count);
-            auto ptr = gTable.addCastPointer<int32>(head);
-            Buffer<void*> dataPointers(count); // Pointers to data in first buffer for comparison later
+            
+            auto oldHead = gc->getCursorPointer();
+            auto ptr = gc->alloc<int32>(count);
             
             // Populate first buffer with data
             for (uint32 i = 0; i < count; ++i) {
                 ptr[i] = i;
-                dataPointers.add(ptr.get(i));
             }
             
             for (uint32 i = 0; i < count; ++i) {
-                Testing::assert(*((uint8*)head->getBufferPointer() + sizeof(int32) * i) == i, "Failed to write value");
+                Testing::assert(((int32*)oldHead->getBufferPointer())[i] == i, "Failed to write value");
             }
             
-            // Migrate to buffer 2
+            // Migrate to off-buffer
             
-            swapBuffer();
+            gc->swapBuffer();
+            auto newHead = gc->getCursorPointer();
+            gc->updatePointer(ptr, gc->alloc<int32>(count));
             
-            head = allocateBuffer<int32>(count);
-            gTable.replacePointer(ptr, head);
+            Testing::assert(oldHead != newHead, "Old buffer is not supposed to be the same as new buffer");
             
             for (uint32 i = 0; i < count; ++i) {
                 ptr[i] = i + 2;
             }
             
             for (uint32 i = 0; i < count; ++i) {
-                Testing::assert(*((uint8*)head->getBufferPointer() + sizeof(int32) * i) == i + 2, "Failed to overwrite value");
-                Testing::assert(ptr.get() != dataPointers[i], "Table pointing to old data");
+                Testing::assert(*ptr.get(i) == i + 2, "Failed to overwrite value");
             }
             
             // Revert to original buffer
             
-            swapBuffer();
+            gc->swapBuffer();
         });
         
         Testing::test("Remove", [&]() {
-            auto head = allocateBuffer<int32>(1);
-            auto ptr = gTable.addCastPointer<int32>(head);
+            auto head = gc->getCursorPointer();
+            auto ptr = gc->alloc<int32>();
             
             Testing::assert(ptr.get() == head->getBufferPointer(), "Failed to insert into table (prerequisite)");
             
-            gTable.removePointer(ptr);
+            gc->removePointer(ptr);
             
             Testing::assert(ptr.get() == nullptr, "Failed to remove from table");
         });
     });
+    
+    GC::destroy();
 }

@@ -2,6 +2,18 @@
 // A stack-allocated wrapper around the various types of primitives or an object
 // pointer.
 // -----
+// NOTE:
+// There's a lot of unnecessary code here because VS15 is still not standard
+// conform. Hopefully this changes with VS16.
+// 
+// In particular, all code handling the various integer types (except assignment
+// operators) are redundant, as a standard compliant compiler should be able to
+// resolve integer types correctly to the long-overload, and not simply complain
+// about an ambiguous call. Tsk.
+// 
+// A template doesn't work either in many instances below because templates are
+// weird when it comes to operators.
+// -----
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
 #pragma once
@@ -153,45 +165,39 @@ namespace Neuro
         }
         Value& operator=(const Value& other) {
             clearManagedPointer();
-            switch (other.m_type) {
+
+			m_type = other.type();
+			m_unsigned = other.isUnsigned();
+            
+			switch (other.m_type) {
             default:
                 m_type = NVT_Undefined;
-                Assert::fail("Unknown value type");
                 break;
             case NVT_Bool:
-                m_type = NVT_Bool;
                 m_longValue = other.getBool();
                 break;
             case NVT_Byte:
-                m_type = NVT_Byte;
                 m_longValue = other.isUnsigned() ? other.getUByte() : other.getByte();
                 break;
             case NVT_Short:
-                m_type = NVT_Short;
                 m_longValue = other.isUnsigned() ? other.getUShort() : other.getShort();
                 break;
             case NVT_Integer:
-                m_type = NVT_Integer;
                 m_longValue = other.isUnsigned() ? other.getUInt() : other.getInt();
                 break;
             case NVT_Long:
-                m_type = NVT_Long;
                 m_longValue = other.isUnsigned() ? other.getULong() : other.getLong();
                 break;
             case NVT_Float:
-                m_type = NVT_Float;
                 m_doubleValue = other.getFloat();
                 break;
             case NVT_Double:
-                m_type = NVT_Double;
                 m_doubleValue = other.getDouble();
                 break;
             case NVT_NativeObject:
-                m_type = NVT_NativeObject;
                 m_objectValue = other.getManagedObject();
                 break;
             case NVT_Object:
-                m_type = NVT_Object;
                 m_ptrValue = other.getNativeObject();
                 break;
             }
@@ -222,17 +228,47 @@ namespace Neuro
         Pointer getManagedObject() const { return m_objectValue; }
         void* getNativeObject() const { return m_ptrValue; }
         
-        template<typename Integral> // Signed integers
-        auto operator==(Integral value) const
-         -> std::enable_if_t<std::numeric_limits<Integral>::is_integer_v && std::numeric_limits<Integral>::is_signed_v, bool>
-        {
-            return isNumeric() && !isUnsigned() getLong() == value;
+		operator bool() const {
+			if (isNumeric()) {
+				if (isInteger()) {
+					return getLong();
+				}
+				return getDouble() != 0;
+			}
+			if (isManagedObject()) {
+				return getManagedObject();
+			}
+			if (isNativeObject()) {
+				return getNativeObject();
+			}
+			return false;
+		}
+		bool operator==(bool value) const {
+			return (bool)*this == value;
+		}
+		bool operator==(uint8 value) const {
+            return isInteger() && isUnsigned() && getULong() == value;
+		}
+        bool operator==(int8 value) const {
+            return isInteger() && !isUnsigned() && getLong() == value;
         }
-        template<typename Integral> // Unsigned integers
-        auto operator==(Integral value) const
-         -> std::enable_if_t<std::numeric_limits<Integral>::is_integer_v && !std::numeric_limits<Integral>::is_signed_v, bool> 
-        {
-            return isNumeric() &&  isUnsigned() && getULong() == value;
+        bool operator==(uint16 value) const {
+            return isInteger() && isUnsigned() && getULong() == value;
+        }
+        bool operator==(int16 value) const {
+            return isInteger() && !isUnsigned() && getLong() == value;
+        }
+        bool operator==(uint32 value) const {
+            return isInteger() && isUnsigned() && getULong() == value;
+        }
+        bool operator==(int32 value) const {
+            return isInteger() && !isUnsigned() && getLong() == value;
+        }
+        bool operator==(uint64 value) const {
+            return isInteger() && isUnsigned() && getULong() == value;
+        }
+        bool operator==(int64 value) const {
+            return isInteger() && !isUnsigned() && getLong() == value;
         }
         bool operator==(double value) const {
             return isDecimal() && getDouble() == value;

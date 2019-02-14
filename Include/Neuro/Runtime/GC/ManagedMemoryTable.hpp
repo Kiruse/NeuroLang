@@ -24,6 +24,9 @@
 
 #pragma once
 
+#pragma warning(push)
+#pragma warning(disable: 4251)
+
 #include <atomic>
 
 #include "DLLDecl.h"
@@ -97,12 +100,6 @@ namespace Neuro {
          */
         class NEURO_API ManagedMemoryTable
         {
-#pragma warning(push)
-
-// [...] needs to have dll-interface to be used by clients of [...]
-// These are private anyway. Clients are not intended to be using these to begin with.
-#pragma warning(disable: 4251)
-
             /**
              * First page in this table.
              */
@@ -112,8 +109,6 @@ namespace Neuro {
              * Next salt value for calculation of a hash-based UID.
              */
             std::atomic<uint32> uidsalt;
-            
-#pragma warning(pop)
             
         public:
             ManagedMemoryTable();
@@ -206,3 +201,5 @@ namespace Neuro {
         };
     }
 }
+
+#pragma warning(pop)

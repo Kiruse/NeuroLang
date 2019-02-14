@@ -53,7 +53,10 @@
         "xtr1common": "cpp",
         "atomic": "cpp",
         "xxatomic": "cpp",
-        "memory": "cpp"
+        "memory": "cpp",
+        "chrono": "cpp",
+        "ratio": "cpp",
+        "xfunctional": "cpp"
     },
     "editor.trimAutoWhitespace": false,
     "editor.rulers": [80, 120]

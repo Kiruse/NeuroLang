@@ -35,8 +35,8 @@ namespace Neuro {
         
         class NEURO_API ManagedMemoryPointerBase {
             friend class GC;
+            friend class GCInterface;
             friend class ManagedMemoryTable;
-            friend class Object;
             
             /**
              * Index of the managed memory descriptor within the internal
@@ -53,28 +53,21 @@ namespace Neuro {
              */
             hashT rowuid;
             
-        public:
+        public:  // RAII
             ManagedMemoryPointerBase() : tableIndex(npos), rowuid(0) {}
-            ~ManagedMemoryPointerBase() {}
+            virtual ~ManagedMemoryPointerBase() {}
             
+        public:  // Methods
             void* get(uint32 index = 0) const;
             
+        public:  // Operators
             bool operator==(const ManagedMemoryPointerBase& other) const { return tableIndex == other.tableIndex; }
             bool operator!=(const ManagedMemoryPointerBase& other) const { return !(*this == other); }
             
             operator bool() const { return tableIndex != npos && get() != nullptr; }
             
-        private:
+        private: // Utility
             ManagedMemoryOverhead* getHeadPointer() const;
-            
-        public:
-            /**
-             * Sets the global table to use to lookup associated ManagedMemoryOverhead's.
-             * 
-             * Intended for testing. Normally a default global table already
-             * exists.
-             */
-            static void useOverheadLookupTable(ManagedMemoryTable* table);
         };
         
         template<typename T>

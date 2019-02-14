@@ -5,7 +5,10 @@
 // License: GPL 3.0
 #pragma once
 
-#include <atomic>
+#pragma warning(push)
+#pragma warning(disable: 4251)
+
+#include <mutex>
 #include <utility>
 
 #include "DLLDecl.h"
@@ -19,10 +22,10 @@
 namespace Neuro {
     namespace Runtime
     {
-        /**
-         * A property is a simple hash map pair of Identifiers and Values.
-         */
-        using Property = std::pair<std::atomic<decltype(Identifier::number)>, Value>;
+        struct Property {
+            decltype(Identifier::number) id;
+            Value value;
+        };
         
         class Object;
         
@@ -36,18 +39,15 @@ namespace Neuro {
          * Managed, classless, generic object.
          */
         class NEURO_API Object {
+            friend class ::Neuro::Runtime::GCInterface;
             friend class ::Neuro::Runtime::GC;
             
-        public: // Types
-            using CreateObjectDelegate = Delegate<Pointer, uint32>;
-            using RecreateObjectDelegate = Delegate<Pointer, Pointer, uint32>;
-            using RootObjectDelegate = Delegate<void, Object*>;
-            using UnrootObjectDelegate = Delegate<void, Object*>;
+        public:  // Types
             using AllocationDelegate = Delegate<ManagedMemoryPointerBase, uint32>;
             
             template<bool Mutable>
             class PropertyIterator {
-            public:
+            public:  // Types
                 using object_type = toggle_const_t<!Mutable, Object>;
                 using difference_type = uint32;
                 using value_type = toggle_const_t<!Mutable, Property>;
@@ -55,19 +55,20 @@ namespace Neuro {
                 using reference = value_type&;
                 using iterator_category = std::bidirectional_iterator_tag;
                 
-            private:
+            private: // Fields
                 object_type* inst;
                 uint32 index;
                 
-            public:
+            public:  // RAII
                 PropertyIterator(object_type* object = nullptr, uint32 index = 0) : inst(object), index(index) {}
                 
+            public:  // Operators
                 bool operator==(const PropertyIterator& other) const { return inst == other.inst && (index == other.index || (index >= inst->capacity() && other.index >= inst->capacity())); }
                 bool operator!=(const PropertyIterator& other) const { return !(*this == other); }
                 operator bool() const { return inst && index < inst.capacity(); }
                 
                 PropertyIterator& operator++() {
-                    while (!inst->props[++index].first && index < inst->capacity());
+                    while (inst->props[++index].id == -1 && index < inst->capacity());
                     return *this;
                 }
                 PropertyIterator operator++(int) {
@@ -76,7 +77,7 @@ namespace Neuro {
                     return *this;
                 }
                 PropertyIterator& operator--() {
-                    while (!inst->props[--index].first && index < inst->capacity());
+                    while (inst->props[--index].id == -1 && index < inst->capacity());
                     return *this;
                 }
                 PropertyIterator operator--(int) {
@@ -87,12 +88,28 @@ namespace Neuro {
                 
                 reference operator*() const { return inst->props[index]; }
                 pointer operator->() const { return inst->props + index; }
+                
+            public:  // Static Methods
+                static PropertyIterator fromFirst(object_type* obj) {
+                    for (uint32 i = 0; i < obj->capacity(); ++i) {
+                        if (obj->props[i].id != -1) return PropertyIterator(obj, i);
+                    }
+                    return PropertyIterator(obj, obj->capacity());
+                }
+                static PropertyIterator fromLast(object_type* obj) {
+                    for (uint32 i = obj->capacity() - 1; i < obj->capacity(); --i) {
+                        if (obj->props[i].id != -1) return PropertyIterator(obj, i);
+                    }
+                    return PropertyIterator(obj, obj->capacity());
+                }
             };
             
             using MutablePropertyIterator = PropertyIterator<true>;
             using ImmutablePropertyIterator = PropertyIterator<false>;
             
-        private: // Properties
+        private: // Fields
+            std::mutex propertyWriteMutex;
+            
             /**
              * Permanent managed memory pointer to this instance.
              */
@@ -107,6 +124,11 @@ namespace Neuro {
              * Maximum number of properties this object can hold.
              */
             uint32 propCount;
+            
+            
+        public:  // Delegates
+            MulticastDelegate<void, Pointer> onMove;
+            MulticastDelegate<void> onDestroy;
             
             
         private: // RAII
@@ -131,7 +153,7 @@ namespace Neuro {
             // Destruction is reserved to the Garbage Collector!
             ~Object();
             
-        public: // Methods
+        public:  // Methods
             /**
              * Get the (mutable) value of this object's property identified by
              * the Identifier.
@@ -188,12 +210,12 @@ namespace Neuro {
             /**
              * Add this object to the GC root.
              */
-            void root(); // See NeuroGC.cpp
+            void root();
             
             /**
              * Remove this object from the GC root.
              */
-            void unroot(); // See NeuroGC.cpp
+            void unroot();
             
             
             /**
@@ -213,6 +235,11 @@ namespace Neuro {
             
         private: // Internal helpers
             /**
+             * Initializes the entire property map, which kinda sucks...
+             */
+            void initProps();
+            
+            /**
              * Simple case of special move construction where the number of
              * properties is the same. Properties are copied over bytewise.
              */
@@ -225,115 +252,35 @@ namespace Neuro {
              */
             void copyRehashProps(Pointer other);
             
+            /**
+             * Only gets an existing property by ID.
+             */
+            Property* getConstProp(Identifier id) const;
             
-        public: // Iterators
-            ImmutablePropertyIterator cbegin() const { return ImmutablePropertyIterator(this, 0); }
-            MutablePropertyIterator begin() { return MutablePropertyIterator(this, 0); }
+            
+        public:  // Iterators
+            ImmutablePropertyIterator cbegin() const { return ImmutablePropertyIterator::fromFirst(this); }
+            MutablePropertyIterator begin() { return MutablePropertyIterator::fromFirst(this); }
             auto begin() const { return cbegin(); }
-            ImmutablePropertyIterator cend() const { return ImmutablePropertyIterator(this, propCount); }
-            MutablePropertyIterator end() { return MutablePropertyIterator(this, propCount); }
+            ImmutablePropertyIterator cend() const { return ImmutablePropertyIterator::fromLast(this); }
+            MutablePropertyIterator end() { return MutablePropertyIterator::fromLast(this); }
             auto end() const { return cend(); }
             
-        public: // Events
-            /**
-             * Triggered when the Garbage Collector moves this object to a new
-             * location. Designed to let native code react if necessary.
-             */
-            EventDelegate<Object*> onMove;
-            
-            /**
-             * Triggered when the Garbage Collector destroys this object. The
-             * object still exists at the time the delegates are called. Designed
-             * to let native code react if necessary.
-             */
-            EventDelegate<> onDestroy;
-            
-        public: // External dependencies (delegates & statics)
-            
-            /**
-             * Resets the delegate used by the createObject static method to its
-             * default.
-             */
-            static void useDefaultCreateObjectDelegate();
-            
-            /**
-             * Resets the delegate used by the recreateObject static method to
-             * its default.
-             */
-            static void useDefaultRecreateObjectDelegate();
-            
-            /**
-             * Resets the delegate used by the root method to its default.
-             */
-            static void useDefaultRootObjectDelegate();
-            
-            /**
-             * Resets the delegate used by the unroot method to its default.
-             */
-            static void useDefaultUnrootObjectDelegate();
-            
-            /**
-             * Sets the delegate used by the createObject static method.
-             */
-            static void setCreateObjectDelegate(const CreateObjectDelegate& deleg);
-            
-            /**
-             * Sets the delegate used by the recreateObject static method.
-             */
-            static void setRecreateObjectDelegate(const RecreateObjectDelegate& deleg);
-            
-            /**
-             * Sets the delegate used by the root method.
-             */
-            static void setRootDelegate(const RootObjectDelegate& deleg);
-            
-            /**
-             * Sets the delegate used by the unroot method.
-             */
-            static void setUnrootDelegate(const UnrootObjectDelegate& deleg);
-            
+        public:  // External dependencies (delegates & statics)
             /**
              * Create an entirely new object using an arbitrary algorithm
              * determined by `useCreateObjectDelegate`.
              */
-            static Pointer createObject(uint32 knownPropsCount);
-            
-            /**
-             * Create a new managed, generic object. Manipulate the object
-             * through the class directly.
-             */
-            static Pointer defaultCreateObject(uint32 knownPropsCount);
-            
-            /**
-             * Create a new generic object in a custom memory region as
-             * determined by the allocation delegate.
-             * 
-             * Useful to slightly alter the behavior of the defaultCreateObject
-             * method.
-             */
-            static Pointer genericCreateObject(const AllocationDelegate& allocDeleg, uint32 knownPropsCount);
+            static Pointer createObject(uint32 propsCount, uint32 propsSlack = 10);
             
             /**
              * Recreate an object based on another, resizing its property map
              * in the process. Uses an arbitrary algorithm determined by
              * `useRecreateObjectDelegate`.
              */
-            static Pointer recreateObject(Pointer object, uint32 knownPropsCount);
-            
-            /**
-             * Create a new managed, generic object from the given object, down-
-             * or upsizing its property map.
-             */
-            static Pointer defaultRecreateObject(Pointer object, uint32 knownPropsCount);
-            
-            /**
-             * Creates a new object from the given object in a custom memory
-             * region as determined by the allocation delegate.
-             * 
-             * Useful to slightly alter the behavior of the defaultRecreateObject
-             * method.
-             */
-            static Pointer genericRecreateObject(const AllocationDelegate& allocDeleg, Pointer object, uint32 knownPropsCount);
+            static Pointer recreateObject(Pointer object, uint32 propsCount, uint32 propsSlack = 10);
         };
     }
 }
+
+#pragma warning(pop)

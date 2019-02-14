@@ -1,4 +1,4 @@
-////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////////
 // Implementation of the Neuro Garbage Collector.
 // 
 //   Object Management Lifecycle
@@ -32,235 +32,117 @@
 // -----
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
-#include <atomic>
 #include <chrono>
-#include <mutex>
-#include <thread>
 #include <utility>
 
 #include "GC/NeuroGC.h"
 #include "GC/NeuroGC.hpp"
-#include "GC/ManagedMemoryTable.hpp"
 #include "GC/Queue.hpp"
 
-#include "Error.hpp"
-#include "Maybe.hpp"
-#include "NeuroObject.hpp"
-#include "NeuroSet.hpp"
 #include "NeuroString.hpp"
 #include "NeuroValue.hpp"
 
 namespace Neuro {
     namespace Runtime {
-        ////////////////////////////////////////////////////////////////////
-        // Managed Memory Segment meta data
-        // -----
-        // Stores some information on a managed memory segment. The memory
-        // segments are used in a stack-like fashion, i.e. new memory
-        // allocation happens by increasing the `next` pointer by the number
-        // of desired bytes. However, unlike the stack, memory can be resized
-        // and shifted around accordingly.
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        // Statics
+        ////////////////////////////////////////////////////////////////////////
         
-        struct ManagedMemorySegment {
-            /**
-             * Pointer to the next managed memory segment.
-             */
-            std::atomic<ManagedMemorySegment*> next;
-            
-            /**
-             * Whether a thread is currently attempting to allocate memory
-             * in this segment.
-             */
-            std::atomic_flag allocating;
-            
-            /**
-             * Whether a thread is currently compacting this memory segment.
-             * After compaction, this segment will be destroyed (or reused
-             * in further compaction).
-             */
-            std::atomic_bool compacting;
-            
-            /**
-             * Pointer to the first address guaranteed to be available.
-             */
-            uint8* ptr;
-            
-            /**
-             * Number of bytes in this memory segment, including the segment
-             * overhead.
-             */
-            uint32 size;
-            
-            /**
-             * Whether this memory segment is reserved for long-term memory
-             * that is known not to resize commonly and has survived multiple
-             * scans (e.g. roots).
-             */
-            uint32 dormant : 1; // TODO: Introduce "dormant" memory segments which contain objects that don't change in size anymore.
-            
-            
-            struct Lock {
-                ManagedMemorySegment* segment;
-                
-                Lock(ManagedMemorySegment* segment) : segment(segment) {
-                    while (segment->allocating.test_and_set()) std::this_thread::yield();
-                }
-                Lock(const Lock&) = delete;
-                Lock(Lock&&) = delete;
-                Lock& operator=(const Lock&) = delete;
-                Lock& operator=(Lock&&) = delete;
-                ~Lock() {
-                    segment->allocating.clear();
-                }
-            };
-        };
+        std::mutex gcMainInstanceMutex;
+        GCInterface* gcMainInstance = nullptr;
         
         
-        ////////////////////////////////////////////////////////////////////
-        // Globals
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        // Local Forward Declarations
+        ////////////////////////////////////////////////////////////////////////
         
-        namespace GCGlobals
-        {
-            /**
-             * Synchronizes access to the initialized flag.
-             */
-            std::mutex lifeMutex;
-            
-            /**
-             * Whether `init` has been called (and corresponding `destroy` has
-             * not yet).
-             */
-            bool initialized = false;
-            
-            /**
-             * Whether to terminate the GC main thread.
-             */
-            std::atomic<bool> terminate;
-            
-            /**
-             * The GC's main thread through which memory is managed.
-             */
-            std::thread backgroundThread;
-            
-            /**
-             * Pointer to this life cycle's first ever managed trivial memory
-             * segment.
-             * Must be set during initialization and can only be unset during
-             * cleanup.
-             */
-            ManagedMemorySegment* firstTrivialMemSeg = nullptr;
-            
-            /**
-             * Pointer to this life cycle's first ever managed non-trivial
-             * memory segment.
-             * Must be set during initialization and may only be unset during
-             * cleanup. Since we expect less (native) non-trivial objects,
-             * should be smaller than `firstTrivialMemSeg`.
-             */
-            ManagedMemorySegment* firstNonTrivialMemSeg = nullptr;
-            
-            /**
-             * Synchronizes access to the scanners multicast delegate.
-             */
-            std::mutex scannersMutex;
-            
-            /**
-             * Managed memory scanners to consult during the scan phase.
-             * They receive a hash set of pointers to scan for, and are
-             * expected to filter out those pointers they have discovered
-             * during their scan.
-             */
-            MulticastDelegate<void, Buffer<ManagedMemoryPointerBase>&> scanners;
-            
-            /**
-             * Table containing descriptors of the various allocated memory
-             * sections.
-             */
-            ManagedMemoryTable dataTable;
-            
-            /**
-             * Synchronizes access to the roots buffer.
-             */
-            std::mutex rootsMutex;
-            
-            /**
-             * Root objects from which to begin tracing.
-             */
-            Buffer<Pointer> roots;
-            
-            namespace LifeCycle
-            {
-                /**
-                 * Synchronizes access to marked.
-                 * 
-                 * Note: Although we currently do not really need it, we will
-                 * likely distribute the workload of the life cycle across
-                 * multiple threads for increased performance. But, we'll
-                 * need to implement the Runtime's main thread pool first.
-                 */
-                std::mutex markedMutex;
-                
-                /**
-                 * Managed memory sections that have been marked for sweeping.
-                 */
-                Buffer<ManagedMemoryPointerBase> marked;
-                
-                /**
-                 * Duration in between scans.
-                 */
-                std::chrono::milliseconds scanInterval;
-            }
+        ManagedMemorySegment* createSegment(uint32 minSize);
+        void appendSegment(ManagedMemorySegment* segment, ManagedMemorySegment* chain);
+        bool segmentContainsHead(ManagedMemorySegment* segment, ManagedMemoryOverhead* head);
+        
+        ManagedMemoryOverhead* getFirstOverhead(ManagedMemorySegment* segment);
+        ManagedMemoryOverhead* getNextOverhead(ManagedMemoryOverhead* head);
+        
+        
+        ////////////////////////////////////////////////////////////////////////
+        // GCInterface
+        ////////////////////////////////////////////////////////////////////////
+        
+        ManagedMemoryPointerBase GCInterface::makePointer(uint32 index, hashT hash) {
+            ManagedMemoryPointerBase pointer;
+            pointer.tableIndex = index;
+            pointer.rowuid = hash;
+            return pointer;
+        }
+        
+        void GCInterface::extractPointerData(ManagedMemoryPointerBase pointer, uint32& index, hashT& hash) {
+            index = pointer.tableIndex;
+            hash  = pointer.rowuid;
         }
         
         
-        ////////////////////////////////////////////////////////////////////
-        // Local Forward Declarations
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        // RAII
+        ////////////////////////////////////////////////////////////////////////
         
-        /**
-         * Check the managed memory for unreachable objects.
-         */
-        uint32 gcScan();
+        GC::GC()
+         : scannersMutex()
+         , rootsMutex()
+         , markedObjectsMutex()
+         , terminate(false)
+         , backgroundThread()
+         , scanners()
+         , dataTable()
+         , firstTrivialMemSeg(createSegment(2048))
+         , firstNonTrivialMemSeg(createSegment(512))
+         , roots()
+         , markedObjects()
+         , scanInterval(std::chrono::seconds(3))
+        {
+            // Add our default Object scanner.
+            scanners.add(ScannerDelegate::MethodDelegate<GC, &GC::scanForObjects>(this));
+            
+            // Start up the main thread
+            backgroundThread = std::thread(Delegate<void>::MethodDelegate<GC, &GC::threadMain>(this));
+        }
         
-        /**
-         * Managed Memory Scanner for our Object type.
-         */
-        void gcScanObject(Buffer<ManagedMemoryPointerBase>& objects);
+        GC::~GC() {
+            terminate = true;
+            backgroundThread.join();
+            terminate = false; // Should the GC be restarted afterwards we need to make sure it won't shut down immediately again.
+            
+            // Trivial memory is easy to clean up. Just free everything in batches!
+            ManagedMemorySegment* curr = firstTrivialMemSeg;
+            while (curr) {
+                ManagedMemorySegment* next = curr->next;
+                std::free(curr);
+                curr = next;
+            }
+            firstTrivialMemSeg = nullptr;
+            
+            // Non-trivial memory is harder to clean up. All valid memory sections
+            // must be cleaned up individually!
+            curr = firstNonTrivialMemSeg;
+            while (curr) {
+                ManagedMemorySegment* next = curr->next;
+                
+                // First allocated object is always immediately behind the
+                // segment overhead.
+                ManagedMemoryOverhead* head = reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(curr) + sizeof(ManagedMemoryOverhead));
+                if (head->destroyDelegate) {
+                    head->destroyDelegate.get()(head->getBufferPointer());
+                }
+                
+                std::free(curr);
+                curr = next;
+            }
+            firstNonTrivialMemSeg = nullptr;
+        }
         
-        /**
-         * Sweep garbage.
-         */
-        void gcSweep();
         
-        /**
-         * Patch the gaps from sweeping.
-         */
-        void gcCompactAll();
-        
-        template<bool Trivial>
-        void gcCompact(ManagedMemorySegment* chain);
-        
-        template<bool Trivial>
-        void gcCompactInner(ManagedMemorySegment* sourceSegment, ManagedMemorySegment* targetSegment, ManagedMemoryOverhead* head);
-        
-        /**
-         * Update strong and weak pointers to managed memory.
-         */
-        void updatePointers(ManagedMemoryOverhead* from, ManagedMemoryOverhead* to);
-        
-        void gcMain();
-        
-        /**
-         * Tests if the given segment contains the specified managed memory overhead.
-         */
-        bool segmentContainsHead(ManagedMemorySegment* segment, ManagedMemoryOverhead* head);
-        
-        
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // Managed Memory Segment Helpers
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         
         ManagedMemorySegment* createSegment(uint32 minSize) {
             const uint32 size = std::max<uint32>(sizeof(ManagedMemorySegment) + minSize, 2048);
@@ -272,6 +154,7 @@ namespace Neuro {
             auto* segment = reinterpret_cast<ManagedMemorySegment*>(newMemory);
             segment->next = nullptr;
             segment->allocating.clear();
+            segment->compacting = false;
             segment->ptr = reinterpret_cast<uint8*>(segment) + sizeof(ManagedMemorySegment);
             segment->size = size;
             segment->dormant = false;
@@ -304,9 +187,9 @@ namespace Neuro {
         }
         
         
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // Allocation
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         
         uint8* allocate_inner(ManagedMemorySegment* chain, uint32 size) {
             // Attempt to find a memory segment that has enough capacity for us still.
@@ -345,140 +228,86 @@ namespace Neuro {
             return addr;
         }
         
-        ManagedMemoryPointerBase GC::allocateTrivial(uint32 size) {
-            if (!GCGlobals::initialized) return ManagedMemoryPointerBase();
-            
+        ManagedMemoryPointerBase GC::allocateTrivial(uint32 elementSize, uint32 count) {
             // Actually allocate the buffer.
-            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
+            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(firstTrivialMemSeg, sizeof(ManagedMemoryOverhead) + elementSize * count));
             
             // Create the overhead & initialize with data
-            new (head) ManagedMemoryOverhead(size);
+            new (head) ManagedMemoryOverhead(elementSize, count);
             
             // Return a managed pointer wrapper.
-            return GCGlobals::dataTable.addPointer(head);
+            return dataTable.addPointer(head);
         }
         
-        ManagedMemoryPointerBase GC::allocateNonTrivial(uint32 size, const Delegate<void, void*, const void*>& copyDelegate, const Delegate<void, void*>& destroyDelegate) {
-            if (!GCGlobals::initialized) return ManagedMemoryPointerBase();
-            
+        ManagedMemoryPointerBase GC::allocateNonTrivial(uint32 elementSize, uint32 count, const Delegate<void, void*, const void*>& copyDelegate, const Delegate<void, void*>& destroyDelegate) {
             // Actually allocate the buffer.
-            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(GCGlobals::firstNonTrivialMemSeg, size + sizeof(ManagedMemoryOverhead)));
+            auto* head = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(firstNonTrivialMemSeg, sizeof(ManagedMemoryOverhead) + elementSize * count));
             
             // Create the overhead & populate with data
-            new (head) ManagedMemoryOverhead(size);
+            new (head) ManagedMemoryOverhead(elementSize, count);
             copyDelegate.copyTo(&head->copyDelegate.get());
             destroyDelegate.copyTo(&head->destroyDelegate.get());
             
             // Return a managed pointer wrapper.
-            return GCGlobals::dataTable.addPointer(head);
+            return dataTable.addPointer(head);
         }
         
         
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
+        // GCInterface
+        ////////////////////////////////////////////////////////////////////////
+        
+        Error GC::root(Pointer obj) {
+            std::scoped_lock{rootsMutex};
+            roots.add(obj);
+            return NoError::instance();
+        }
+        
+        Error GC::unroot(Pointer obj) {
+            std::scoped_lock{rootsMutex};
+            roots.remove(obj);
+            return NoError::instance();
+        }
+        
+        
+        void* GC::resolve(ManagedMemoryPointerBase pointer) {
+            return dataTable.get(pointer);
+        }
+        
+        
+        ////////////////////////////////////////////////////////////////////////
         // GC Background Thread
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         
-        Error GC::init() {
-            using namespace GCGlobals;
-            using namespace GCGlobals::LifeCycle;
-            
-            std::scoped_lock{lifeMutex};
-            if (initialized) return InvalidStateError::instance();
-            
-            // Start by allocating 2MiB of managed trivial memory
-            firstTrivialMemSeg = createSegment(2048);
-            
-            // as well as 512KiB of managed non-trivial memory.
-            // TODO: Support non-trivial managed objects!
-            firstNonTrivialMemSeg = createSegment(512);
-            
-            // Add our default Object scanner.
-            scanners.add(ScannerDelegate::FunctionDelegate<gcScanObject>());
-            
-            // Setup next scan time.
-            scanInterval = std::chrono::seconds(3);
-            
-            // Start up the main thread
-            terminate = false;
-            backgroundThread = std::thread(gcMain);
-            
-            return NoError::instance();
-        }
-        
-        Error GC::destroy() {
-            using namespace GCGlobals;
-            
-            std::scoped_lock{lifeMutex};
-            if (!initialized) return InvalidStateError::instance();
-            
-            terminate = true;
-            backgroundThread.join();
-            terminate = false; // Should the GC be restarted afterwards we need to make sure it won't shut down immediately again.
-            
-            // Trivial memory is easy to clean up. Just free everything in batches!
-            ManagedMemorySegment* curr = firstTrivialMemSeg;
-            while (curr) {
-                ManagedMemorySegment* next = curr->next;
-                std::free(curr);
-                curr = next;
-            }
-            firstTrivialMemSeg = nullptr;
-            
-            // Non-trivial memory is harder to clean up. All valid memory sections
-            // must be cleaned up individually!
-            curr = firstNonTrivialMemSeg;
-            while (curr) {
-                ManagedMemorySegment* next = curr->next;
-                
-                // First allocated object is always immediately behind the
-                // segment overhead.
-                ManagedMemoryOverhead* head = reinterpret_cast<ManagedMemoryOverhead*>(reinterpret_cast<uint8*>(curr) + sizeof(ManagedMemoryOverhead));
-                
-                // TODO: Support non-trivial managed objects!
-                
-                std::free(curr);
-                curr = next;
-            }
-            firstNonTrivialMemSeg = nullptr;
-            
-            initialized = false;
-            
-            return NoError::instance();
-        }
-        
-        void gcMain() {
-            // Init happens in GC::init()
-            
+        void GC::threadMain() {
             uint32 marks = 0;
             
             // Use of .load() method should make it clear to the compiler to
             // not optimize the loop condition away.
-            while (!GCGlobals::terminate.load()) {
+            while (!terminate.load()) {
                 // TODO: Improve upon this barbaric stop-the-world GC algorithm.
-                marks += gcScan();
+                marks += scan();
                 if (marks) {
-                    gcSweep();
-                    gcCompactAll();
+                    sweep();
+                    compact();
                     marks = 0;
                 }
-                std::this_thread::sleep_for(GCGlobals::LifeCycle::scanInterval);
+                std::this_thread::sleep_for(scanInterval);
             }
-            
-            // Cleanup happens in GC::destroy()
         }
         
         
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // Scan Phase
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         
-        uint32 gcScan() {
-            Buffer<ManagedMemoryPointerBase> pointers = GCGlobals::dataTable.getAllPointers();
-            GCGlobals::scanners(pointers);
-            return 0; // TODO: Proper return code?
+        uint32 GC::scan() {
+            Buffer<ManagedMemoryPointerBase> pointers = dataTable.getAllPointers();
+            scanners(pointers);
+            return pointers.length();
         }
         
-        void gcScanObject(Buffer<ManagedMemoryPointerBase>& scans) {
+        void GC::scanForObjects(Buffer<ManagedMemoryPointerBase>& scans) {
             // No need to scan if nothing issued to scan.
             if (!scans.length()) return;
             
@@ -487,8 +316,8 @@ namespace Neuro {
             
             // Start with scanning roots first.
             {
-                std::scoped_lock{GCGlobals::rootsMutex};
-                processList = GCGlobals::roots;
+                std::scoped_lock{rootsMutex};
+                processList = roots;
             }
             
             // Set of objects we've already visited. Avoids cyclic references
@@ -502,8 +331,8 @@ namespace Neuro {
                 processList.splice(0);
                 
                 for (Property& prop : *curr) {
-                    if (prop.second.isManagedObject()) {
-                        Pointer other = prop.second.getManagedObject();
+                    if (prop.value.isManagedObject()) {
+                        Pointer other = prop.value.getManagedObject();
                         
                         // Remove from trace list, if it is in it!
                         scans.remove(other);
@@ -522,28 +351,30 @@ namespace Neuro {
             
             // Remove the pointers from the pointer table
             for (auto garbage : scans) {
-                GCGlobals::dataTable.removePointer(garbage);
+                dataTable.removePointer(garbage);
             }
             
             {
-                std::scoped_lock{GCGlobals::LifeCycle::markedMutex};
-                GCGlobals::LifeCycle::marked.add(scans.begin(), scans.end());
+                std::scoped_lock{markedObjectsMutex};
+                markedObjects.add(scans.begin(), scans.end());
             }
         }
         
         
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // Sweep Phase
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         
-        template<bool Trivial>
-        void gcSweep() {
-            using namespace GCGlobals::LifeCycle;
-            
+        void GC::sweep() {
+            sweep(true);
+            sweep(false);
+        }
+        
+        void GC::sweep(bool trivial) {
             Buffer<ManagedMemoryPointerBase> processList, oldMarked;
             {
-                std::scoped_lock{markedMutex};
-                oldMarked = std::move(marked);
+                std::scoped_lock{markedObjectsMutex};
+                oldMarked = std::move(markedObjects);
                 processList = oldMarked;
             }
             
@@ -555,7 +386,7 @@ namespace Neuro {
                 auto* head = GC::getOverhead(pointer);
                 
                 // Call non-trivial memory's destruction delegate.
-                if (!Trivial) {
+                if (!trivial) {
                     head->destroyDelegate.get()(pointer.get());
                 }
                 
@@ -563,24 +394,10 @@ namespace Neuro {
             }
         }
         
-        void gcSweep() {
-            gcSweep<true>();
-            gcSweep<false>();
-        }
         
-        
-        ////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // Compaction Phase
-        ////////////////////////////////////////////////////////////////////
-        
-        template<bool> void gcCompact();
-        
-        void gcCompactAll() {
-            using namespace GCGlobals;
-            
-            gcCompact<true>();
-            gcCompact<false>();
-        }
+        ////////////////////////////////////////////////////////////////////////
         
         /**
          * Find the first swept managed memory overhead in the given segment
@@ -604,39 +421,60 @@ namespace Neuro {
             return head;
         }
         
-        template<bool Trivial>
-        void gcCompact() {
-            ManagedMemorySegment* sourceSegment = Trivial ? GCGlobals::firstTrivialMemSeg : GCGlobals::firstNonTrivialMemSeg;
+        void GC::compact() {
+            compact(true);
+            compact(false);
+        }
+        
+        void GC::compact(bool trivial) {
+            ManagedMemorySegment* sourceSegment = trivial ? firstTrivialMemSeg : firstNonTrivialMemSeg;
             ManagedMemorySegment* targetSegment = nullptr;
             
-            
-        }
-        
-        /**
-         * Specialized compaction for trivial types is much simpler: we simply
-         * move bytes around.
-         */
-        template<>
-        void gcCompactInner<true>(ManagedMemorySegment* sourceSegment, ManagedMemorySegment* targetSegment, ManagedMemoryOverhead* head) {
-            // TODO
-        }
-        
-        /**
-         * Specialized compaction for non-trivial types is a more lengthy
-         * operation as we have to consult each 
-         */
-        template<>
-        void gcCompactInner<false>(ManagedMemorySegment* sourceSegment, ManagedMemorySegment* targetSegment, ManagedMemoryOverhead* head) {
             // TODO
         }
         
         
-        ////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////
         // Low Level API
-        ////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////////
         
         Error GC::registerMemoryScanner(const Delegate<void, Buffer<ManagedMemoryPointerBase>&>& scanner) {
-            GCGlobals::scanners += scanner;
+            scanners += scanner;
+            return NoError::instance();
+        }
+        
+        
+        ////////////////////////////////////////////////////////////////////////////
+        // Main Instance Management
+        ////////////////////////////////////////////////////////////////////////////
+        
+        GCInterface* GC::instance() {
+            return gcMainInstance;
+        }
+        
+        MaybeAnError<GC*> GC::init() {
+            std::scoped_lock{gcMainInstanceMutex};
+            if (gcMainInstance) return InvalidStateError::instance();
+            
+            gcMainInstance = new GC();
+            return NoError::instance();
+        }
+        
+        Error GC::init(GCInterface* instance) {
+            std::scoped_lock{gcMainInstanceMutex};
+            if (gcMainInstance) return InvalidStateError::instance();
+            
+            gcMainInstance = instance;
+            return NoError::instance();
+        }
+        
+        Error GC::destroy() {
+            std::scoped_lock{gcMainInstanceMutex};
+            if (!gcMainInstance) return InvalidStateError::instance();
+            
+            delete gcMainInstance;
+            gcMainInstance = nullptr;
+            
             return NoError::instance();
         }
     }
