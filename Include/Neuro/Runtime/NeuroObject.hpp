@@ -154,6 +154,14 @@ namespace Neuro {
             ~Object();
             
         public:  // Methods
+            bool hasProperty(Identifier id) const {
+                return !!getConstProp(id);
+            }
+            
+            bool hasProperty(const String& name) const {
+                return hasProperty(Identifier::lookup(name));
+            }
+            
             /**
              * Get the (mutable) value of this object's property identified by
              * the Identifier.
