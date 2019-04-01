@@ -1,20 +1,28 @@
 ////////////////////////////////////////////////////////////////////////////////
-// Table storing pointers to the various managed objects. The table itself is
-// divided into pages of 100 entries, and 10 pages are grouped together and
-// stored in a contiguous memory buffer. Every page tracks how many items are
-// used. This allows us to more quickly search for an appropriate slot in the
-// entire table.
+// Table storing pointers to the various managed objects.
 // 
-// Using the table concurrent in-place compaction becomes a viable strategy as
-// it allows us to copy the object to a new location, then update a single
-// pointer in order to update all references altogether.
+// Table structure:
+// + Table
+// |-+ Ledger
+//   |-+ 5 Pages
+//     |-+ 10 Sections
+//       |-- 100 Rows (pointers + minor overhead)
 // 
-// Prior, the primary issue was that updating every single reference across all
-// managed and unmanaged objects would require a rather extremely optimized
-// algorithm, and a mark-and-copy policy rather than mark-and-compact. This
-// originates in our ideom principle of full concurrency support: the runtime
-// fully supports concurrent threads of execution without any stop-the-world
-// interruptions for garbage collection.
+// One ledger is stored directly in the stack of the table itself. One additional
+// ledger is stored on heap. Further ledgers are created at runtime as needed.
+// 
+// All nested structures are stack-based, with the exception of ledgers.
+// 
+// Ledgers *must* be heap-based in order to permit active users (threads) to use
+// them while the GC thread is adding additional ledgers. This fixes the number
+// of indirections to 3: 1 = list of ledgers, 2 = list of pages, 3 = stored pointer.
+// Additionally, LL-Cache may keep the list of ledgers, which is not possible
+// with a linked list.
+// 
+// It remains to be seen whether this is efficient enough. An alternative
+// solution would be implementation of a many-readers-one-writer lock system
+// which would mean a stop-the-world (for a few millis) while replacing the
+// ledgers, but at the same time copying all ledgers performs at O(n).
 // 
 // TODO: Optimize for systems where at least one of the atomics is not lock-less.
 // Most importantly the sections' ptrs array needs to be mutex-less.
@@ -28,26 +36,29 @@
 #pragma warning(disable: 4251)
 
 #include <atomic>
+#include <utility>
+#include <cstring>
 
 #include "DLLDecl.h"
 #include "Error.hpp"
 #include "ManagedMemoryPointer.hpp"
 #include "ManagedMemoryOverhead.hpp"
+#include "NeuroSet.hpp"
 #include "Numeric.hpp"
+#include "Concurrency/ReverseSemaphore.hpp"
 
-#define NEURO_MANAGEDMEMORYTABLESECTION_SIZE 100
-#define NEURO_MANAGEDMEMORYTABLEPAGE_SIZE 10
+#define NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE 1000
 
 namespace Neuro {
     namespace Runtime
     {
-        struct ManagedMemoryTableRow
+        struct ManagedMemoryTableRecord
         {
             /**
              * Actual underlying physical address. Assumed to point to managed
              * memory.
              */
-            std::atomic<ManagedMemoryOverhead*> ptr;
+            ManagedMemoryOverhead* ptr;
             
             /**
              * Locally unique ID of the row, designed to minimize clashing
@@ -58,40 +69,130 @@ namespace Neuro {
              */
             hashT uid;
             
-            ManagedMemoryTableRow() : ptr(nullptr), uid(0) {}
-        };
-        
-        struct ManagedMemoryTableSection
-        {
-            /**
-             * The pointer is indicative for open rows in the table. If not null,
-             * the row is already in use.
-             */
-            ManagedMemoryTableRow rows[100];
-            
-            /**
-             * Number of occupied section entries. Used as a heuristic when
-             * searching for an unused row.
-             */
-            std::atomic<uint8> numOccupied;
-            
-            ManagedMemoryTableSection() : numOccupied(0) {}
+            ManagedMemoryTableRecord() : ptr(nullptr), uid(0) {}
         };
         
         struct ManagedMemoryTablePage
         {
-            /**
-             * Sections in this page.
-             */
-            ManagedMemoryTableSection sections[10];
+            ManagedMemoryTableRecord records[NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE];
             
-            /**
-             * Pointer to the next page in case this page has become full.
-             */
-            std::atomic<ManagedMemoryTablePage*> nextPage;
             
-            ManagedMemoryTablePage() : nextPage(nullptr) {}
+            ManagedMemoryTablePage() : records() {}
+            ManagedMemoryTablePage(const ManagedMemoryTablePage& other) : records() {
+                std::memcpy(records, other.records, sizeof(records));
+            }
+            ManagedMemoryTablePage& operator=(const ManagedMemoryTablePage& other) {
+                std::memcpy(records, other.records, sizeof(records));
+            }
+            ~ManagedMemoryTablePage() {}
         };
+        
+        struct ManagedMemoryTableRange
+        {
+            std::atomic<uint32> start;
+            uint32 end;
+            
+            ManagedMemoryTableRange() = default;
+            ManagedMemoryTableRange(uint32 start, uint32 end) : start(start), end(end) {}
+            
+            uint32 claim() {
+                uint32 index = start.fetch_add(1);
+                if (index >= end) {
+                    start.fetch_sub(1);
+                    return npos;
+                }
+                return index;
+            }
+        };
+        
+        
+        /**
+         * Specialized RAII allocator designed for ManagedMemoryTablePages. Main
+         * distinction is that data is treated as bytewise copyable raw data.
+         */
+        struct ManagedMemoryTablePageAllocator {
+        public: // Properties
+            ManagedMemoryTablePage* m_buffer;
+            uint32 m_size;
+            
+        public: // RAII
+            ManagedMemoryTablePageAllocator() : m_buffer(nullptr), m_size(0) {}
+            ManagedMemoryTablePageAllocator(uint32 desiredSize) : m_buffer(alloc(desiredSize)), m_size(desiredSize) {}
+            ManagedMemoryTablePageAllocator(const ManagedMemoryTablePageAllocator& other) : m_buffer(alloc(other.m_size)), m_size(other.m_size) {}
+            ManagedMemoryTablePageAllocator(ManagedMemoryTablePageAllocator&& other) : m_buffer(other.m_buffer), m_size(other.m_size) {
+                other.m_buffer = nullptr;
+                other.m_size = 0;
+            }
+            ManagedMemoryTablePageAllocator& operator=(const ManagedMemoryTablePageAllocator& other) {
+                if (m_buffer) delete[] m_buffer;
+                m_buffer = alloc(other.m_size);
+                m_size   = other.m_size;
+                copy(0, other.m_buffer, m_size);
+                return *this;
+            }
+            ManagedMemoryTablePageAllocator& operator=(ManagedMemoryTablePageAllocator&& other) {
+                if (m_buffer) delete[] m_buffer;
+                m_buffer = other.m_buffer;
+                m_size   = other.m_size;
+                other.m_buffer = nullptr;
+                other.m_size   = 0;
+                return *this;
+            }
+            ~ManagedMemoryTablePageAllocator() {
+                if (m_buffer) delete[] m_buffer;
+                m_buffer = nullptr;
+                m_size = 0;
+            }
+            
+        public: // Interface
+            void resize(uint32 desiredSize) {
+                if (m_buffer && desiredSize != m_size) {
+                    ManagedMemoryTablePage* tmp = m_buffer;
+                    m_buffer = alloc(desiredSize);
+                    if (m_buffer) {
+                        std::memcpy(m_buffer, tmp, std::min(desiredSize, m_size));
+                        m_size = desiredSize;
+                        delete[] tmp;
+                    }
+                    else {
+                        m_size = 0;
+                    }
+                }
+            }
+            
+            void destroy(uint32 index, uint32 count) {}
+            
+            void copy(uint32 index, const ManagedMemoryTablePage* source, uint32 count) {
+                if (m_buffer) {
+                    count = std::min(count, m_size - index) * sizeof(ManagedMemoryTablePage);
+                    std::memcpy(m_buffer, source, count);
+                }
+            }
+            void copy(uint32 to, uint32 from, uint32 count) {
+                if (m_buffer) {
+                    count = std::min(m_size - to, count);
+                    count = std::min(m_size - from, count);
+                    std::memmove(m_buffer + to, m_buffer + from, count * sizeof(ManagedMemoryTablePage));
+                }
+            }
+            
+            ManagedMemoryTablePage* get(uint32 index) { return m_buffer + index; }
+            const ManagedMemoryTablePage* get(uint32 index) const { return m_buffer + index; }
+            
+            uint32 size() const { return m_size; }
+            uint32 actual_size() const { return m_size; }
+            uint32 numBytes() const { return m_size * sizeof(ManagedMemoryTablePage); }
+            
+            ManagedMemoryTablePage* data() { return m_buffer; }
+            const ManagedMemoryTablePage* data() const { return m_buffer; }
+            
+        protected: // Static helpers
+            static ManagedMemoryTablePage* alloc(uint32 desiredSize) {
+                if (!desiredSize) return nullptr;
+                return new ManagedMemoryTablePage[desiredSize];
+            }
+        };
+        
         
         /**
          * The entire table that stores and manages our pointers to managed
@@ -100,18 +201,108 @@ namespace Neuro {
          */
         class NEURO_API ManagedMemoryTable
         {
+        public:    // Types
+            class Iterator {
+            private: // Properties
+                const ManagedMemoryTable* table;
+                uint32 tableIndex;
+                
+            public:  // RAII
+                Iterator(const ManagedMemoryTable* table, uint32 tableIndex) : table(table), tableIndex(tableIndex) {}
+                Iterator(const Iterator& other) : table(other.table), tableIndex(other.tableIndex) {}
+                Iterator& operator=(const Iterator& other) {
+                    table = other.table;
+                    tableIndex = other.tableIndex;
+                    return *this;
+                }
+                ~Iterator() = default;
+                
+            public:  // Methods
+                Iterator& operator++();
+                
+                Iterator operator++(int) {
+                    Iterator copy(*this);
+                    ++*this;
+                    return copy;
+                }
+                
+                Iterator& operator--();
+                
+                Iterator operator--(int) {
+                    Iterator copy(*this);
+                    --*this;
+                    return copy;
+                }
+                
+                ManagedMemoryPointerBase operator*() const {
+                    ManagedMemoryPointerBase ptr;
+                    ManagedMemoryTableRecord* record = table->getRecord(tableIndex);
+                    ptr.tableIndex = tableIndex;
+                    ptr.rowuid = record->uid;
+                    return ptr;
+                }
+                
+                ManagedMemoryPointerBase get() const {
+                    return **this;
+                }
+                
+                bool operator==(const Iterator& other) const {
+                    return table == other.table && tableIndex == other.tableIndex;
+                }
+                
+                bool operator!=(const Iterator& other) const {
+                    return !(*this==other);
+                }
+            };
+        
+        private:   // Properties
             /**
-             * First page in this table.
+             * Whether the table should be expanded.
              */
-            ManagedMemoryTablePage firstPage;
+            std::atomic<bool> shouldExpand;
+            
+            /**
+             * Whether we should scan for gaps eventually.
+             */
+            std::atomic<bool> shouldScanGaps;
+            
+            /**
+             * Underlying many-readers-one-writer sync mechanism.
+             */
+            mutable Concurrency::ReverseSemaphore semaphore;
+            
+            Buffer<ManagedMemoryTablePage, ManagedMemoryTablePageAllocator> pages;
+            
+            /**
+             * Stores the index of the next record to be inserted.
+             */
+            std::atomic<uint32> nextRecordIdx;
+            
+            /**
+             * Many-readers-one-writer sync mechanism for gaps detection.
+             */
+            mutable Concurrency::ReverseSemaphore gapsSemaphore;
+            
+            /**
+             * Pointer to the buffer of currently available ranges. May also
+             * contain exhausted ranges.
+             */
+            ManagedMemoryTableRange* gaps;
+            
+            /**
+             * Number of currently available ranges.
+             */
+            uint32 numGaps;
             
             /**
              * Next salt value for calculation of a hash-based UID.
              */
             std::atomic<uint32> uidsalt;
             
-        public:
+        public:    // RAII
             ManagedMemoryTable();
+            
+        public:    // Methods
             
             /**
              * Assumes the given pointer points to valid managed memory, adds it
@@ -153,51 +344,41 @@ namespace Neuro {
             void* get(const ManagedMemoryPointerBase& ptr) const;
             
             template<typename T>
-            T* get(const ManagedMemoryPointer<T>& ptr) const
-            {
-                return reinterpret_cast<T*>((const ManagedMemoryPointerBase)ptr);
+            T* get(const ManagedMemoryPointer<T>& ptr) const {
+                return reinterpret_cast<T*>(get((const ManagedMemoryPointerBase)ptr));
             }
             
-            /**
-             * Gets pointers to all elements listed in the table.
-             */
-            Buffer<ManagedMemoryPointerBase> getAllPointers() const;
+            void collect(StandardHashSet<ManagedMemoryPointerBase>& pointers) const;
             
-        protected:
+        public:    // Management
             /**
-             * Find a table section from the entire table that has capacity for
-             * our address. Due to lockless asynchronicity, this may or may not
-             * be the first possible section.
-             * 
-             * If no section could be found during our iteration, a new section
-             * will be created. Afterwards the algorithm will attempt to update
-             * the last page to point to this new page. If another thread just
-             * so happened to do this before us, the newly created page will be
-             * freed again and the preexisting new thread will be searched
-             * instead. If afterwards we still could not find an appropriate
-             * section, this paragraph is repeated.
-             * 
-             * In general, true parallelism should allow up to n threads - where
-             * n is the number of logical cores - to run reliably without
-             * locking each other out to the point that a thread cannot allocate
-             * memory. Even beyond that number it's highly unlikely we'll lock
-             * dead.
+             * Get the number of pages in this table.
              */
-            void findSectionForInsert(ManagedMemoryOverhead* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex);
+            uint32 countPages() const {
+                return pages.length();
+            }
+            
+            uint32 countRecordsEstimate() const;
             
             /**
-             * Finds a table section from the specified page that has capacity
-             * for our address. Due to lockless asynchronicity, this may or may
-             * not be the first possible section.
-             * 
-             * If no such section could be found, returns a nullptr.
+             * Detects gaps in the table that were created upon removing a record.
              */
-            uint32 findSectionForInsert(ManagedMemoryTablePage* page, ManagedMemoryOverhead* addr);
+            void findGaps(uint32 minGapSize = 1);
             
-            /**
-             * Gets the row stored behind the given index.
-             */
-            bool get_internal(uint32 index, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, ManagedMemoryTableRow*& row);
+            
+        public:    // Iterator
+            Iterator begin()  const { return Iterator(this, 0); }
+            Iterator cbegin() const { return Iterator(this, 0); }
+            Iterator end()    const { return Iterator(this, npos); }
+            Iterator cend()   const { return Iterator(this, npos); }
+            
+            
+        protected: // Methods
+            static void decomposeTableIndex(uint32 tableIndex, uint32& pageIndex, uint32& recordIndex);
+            
+            ManagedMemoryTableRecord* getRecord(uint32 tableIndex) const;
+            
+            uint32 claimIndex();
         };
     }
 }

@@ -82,6 +82,6 @@ namespace Neuro {
     DECLARE_NEURO_ERROR(InvalidState)
     DECLARE_NEURO_ERROR(InvalidArgument)
     DECLARE_NEURO_ERROR(NullPointer)
-    DECLARE_NEURO_ERROR(DataSetNotFound)
+    DECLARE_NEURO_ERROR(NotFound)
     DECLARE_NEURO_ERROR(UncaughtException)
 }

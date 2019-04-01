@@ -187,7 +187,7 @@ namespace Neuro
             if (m_length + 1 > size()) {
                 alloc.resize(size() + m_expand);
             }
-            internal_move(before, before + 1, WorkaroundTag);
+            internal_move(before, before + 1, alloc, WorkaroundTag);
             alloc.create(before, 1, args...);
 			++m_length;
             return *this;
@@ -197,7 +197,7 @@ namespace Neuro
             if (m_length + 1 > size()) {
                 resize(m_length + m_expand);
             }
-            internal_move(before, before + 1, WorkaroundTag);
+            internal_move(before, before + 1, alloc, WorkaroundTag);
             alloc.copy(before, &elem, 1);
             ++m_length;
             return *this;
@@ -207,7 +207,7 @@ namespace Neuro
             if (m_length + other.m_length > size()) {
                 fit(m_length + other.m_length);
             }
-            internal_move(before, before + other.m_length, WorkaroundTag);
+            internal_move(before, before + other.m_length, alloc, WorkaroundTag);
             alloc.copy(before, other.alloc.data(), other.m_length);
 			m_length += other.m_length;
             return *this;
@@ -224,7 +224,7 @@ namespace Neuro
                 if (m_length + dist > size()) {
                     fit(m_length + dist);
                 }
-                internal_move(before, before + dist, WorkaroundTag);
+                internal_move(before, before + dist, alloc, WorkaroundTag);
                 alloc.copy(before, first, dist);
 				m_length += dist;
             }
@@ -264,7 +264,7 @@ namespace Neuro
                 
                 // Are there even any elements left to move up?
                 if (index + numberOfElements < m_length) {
-                    internal_move(index + numberOfElements, index, WorkaroundTag);
+                    internal_move(index + numberOfElements, index, alloc, WorkaroundTag);
                 }
                 
                 m_length -= numberOfElements;
@@ -363,6 +363,7 @@ namespace Neuro
         }
         
         virtual uint32 length() const { return m_length; }
+        virtual void override_length(uint32 newLength) { m_length = std::min(newLength, size()); }
         virtual uint32 size() const { return alloc.size(); }
         virtual uint32 actual_size() const { return alloc.actual_size(); }
         virtual uint32 numBytes() const { return alloc.numBytes(); }
@@ -432,15 +433,15 @@ namespace Neuro
          * arise. The calling code should strive to never leave "gaps" in the
          * buffer.
          */
-        template<typename U = T>
-        auto internal_move(uint32 from, uint32 to, FWorkaroundTag)
+        template<typename Alloc = Allocator>
+        auto internal_move(uint32 from, uint32 to, Alloc& alloc, FWorkaroundTag)
          -> decltype(alloc.move(to, from, (uint32)1), void()) // We don't care about the exact number, just the fact it's uint32.
         {
             // No need to consider to, as alloc.move should already restrict that to prevent the buffer from overflowing.
             alloc.move(to, from, m_length - from);
         }
         
-        void internal_move(uint32 from, uint32 to, ...) {
+        void internal_move(uint32 from, uint32 to, Allocator& alloc, ...) {
             uint32 count = m_length - from;
             // No need to consider to, as alloc.copy should already restrict that to prevent the buffer from overflowing.
             alloc.copy(to, from, count);

@@ -4,239 +4,192 @@
 // 
 // Implementation assumes the pointers point to a
 // Neuro::Runtime::ManagedMemoryOverhead prefixed buffer.
+// 
+// TODO: Remove empty pages
 // -----
 // Copyright (c) Kiruse 2018
 // License: GPL 3.0
 
 #include <cassert>
 
+#include "Assert.hpp"
 #include "HashCode.hpp"
+#include "Concurrency/ScopeLocks.hpp"
 #include "GC/ManagedMemoryTable.hpp"
 #include "GC/ManagedMemoryOverhead.hpp"
 
 namespace Neuro {
     namespace Runtime
     {
-        constexpr uint32 g_pagesize = NEURO_MANAGEDMEMORYTABLEPAGE_SIZE;
-        constexpr uint32 g_sectsize = NEURO_MANAGEDMEMORYTABLESECTION_SIZE;
+        using namespace Concurrency;
         
+        ManagedMemoryTable::Iterator& ManagedMemoryTable::Iterator::operator++() {
+            const uint32 maxIdx = table->pages.size() * NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE;
+            
+            ManagedMemoryTableRecord* record;
+            do {
+                record = table->getRecord(++tableIndex);
+            } while (record->ptr == nullptr && tableIndex < maxIdx);
+            
+            if (tableIndex >= maxIdx) {
+                tableIndex = npos;
+            }
+            
+            return *this;
+        }
         
-        ManagedMemoryTable::ManagedMemoryTable() : firstPage(), uidsalt(0) {}
+        ManagedMemoryTable::Iterator& ManagedMemoryTable::Iterator::operator--() {
+            const uint32 maxIdx = table->pages.size() * NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE;
+            
+            ManagedMemoryTableRecord* record;
+            do {
+                record = table->getRecord(++tableIndex);
+            } while (record->ptr == nullptr && tableIndex < maxIdx);
+            
+            if (tableIndex >= maxIdx) {
+                tableIndex = npos;
+            }
+            
+            return *this;
+        }
+        
+
+        ManagedMemoryTable::ManagedMemoryTable()
+         : shouldExpand(false)
+         , shouldScanGaps(false)
+         , semaphore()
+         , pages(10)
+         , nextRecordIdx(0)
+         , gapsSemaphore()
+         , gaps(nullptr)
+         , numGaps(0)
+         , uidsalt(0)
+        {
+            pages.override_length(pages.size());
+        }
         
         
         ManagedMemoryPointerBase ManagedMemoryTable::addPointer(ManagedMemoryOverhead* addr) {
-            // Non-changing comparison pointer value.
-            static ManagedMemoryOverhead* cmpptr = nullptr;
-            
-            // Create the resulting abstract managed memory pointer.
             ManagedMemoryPointerBase result;
             
-            // Find page and section (incl. indices) to insert into.
-            ManagedMemoryTablePage* page;
-            ManagedMemoryTableSection* section;
-            uint32 pageIndex, sectionIndex;
-            findSectionForInsert(addr, page, section, pageIndex, sectionIndex);
-            assert(!!page && !!section);
+            uint32 tableIndex = claimIndex(), pageIndex, recordIndex;
+            Assert::Value("Table index is valid", tableIndex != npos);
+            decomposeTableIndex(tableIndex, pageIndex, recordIndex);
             
-            // Compute a likely locally unique ID from the address and an incrementing salt.
+            // Double-checked lock
+            if (pageIndex >= pages.size()) {
+                UniqueLock lock(semaphore);
+                if (pageIndex >= pages.size()) {
+                    pages.resize(pages.size() + 10);
+                    pages.override_length(pages.size());
+                }
+            }
+            
             const hashT addrHash = calculateHash(addr);
             const hashT saltHash = calculateHash(uidsalt.fetch_add(1));
             const hashT uid = combineHashOrdered(addrHash, saltHash);
             
-            // Find the specific row and populate it with data.
-            for (uint32 rowindex = 0; rowindex < g_sectsize; ++rowindex) {
-                // Shortcut to the current row.
-                auto& row = section->rows[rowindex];
-                
-                // Attempt to claim the row. A non-nullptr row is already claimed.
-                if (row.ptr.compare_exchange_strong(cmpptr, addr)) {
-                    row.uid = uid;
-                    
-                    // Populate the resulting managed memory pointer with valid data.
-                    result.tableIndex = rowindex;
-                    result.rowuid = uid;
-                    break;
-                }
+            {
+                SharedLock lock(semaphore);
+                ManagedMemoryTableRecord& record = *getRecord(tableIndex);
+                record.ptr = addr;
+                record.uid = uid;
             }
             
+            result.tableIndex = tableIndex;
+            result.rowuid = uid;
             return result;
         }
         
         Error ManagedMemoryTable::replacePointer(const ManagedMemoryPointerBase& ptr, ManagedMemoryOverhead* newAddr) {
-            ManagedMemoryTablePage* page;
-            ManagedMemoryTableSection* section;
-            ManagedMemoryTableRow* row;
+            SharedLock lock(semaphore);
             
-            // Find the corresponding row, if any.
-            if (!get_internal(ptr.tableIndex, page, section, row)) return DataSetNotFoundError::instance();
+            ManagedMemoryTableRecord& record = *getRecord(ptr.tableIndex);
+            if (record.uid != ptr.rowuid) return NotFoundError::instance();
             
-            // Ensure the row exists & has the same rowuid.
-            if (!row || row->uid != ptr.rowuid) return DataSetNotFoundError::instance();
-            
-            // Update the row.
-            row->ptr = newAddr;
+            record.ptr = newAddr;
             return NoError::instance();
         }
         
         Error ManagedMemoryTable::removePointer(const ManagedMemoryPointerBase& ptr) {
-            // Find the corresponding row, if any.
-            ManagedMemoryTablePage* page;
-            ManagedMemoryTableSection* section;
-            ManagedMemoryTableRow* row;
+            SharedLock lock(semaphore);
             
-            // Ensure the row exists & has the same rowuid.
-            if (!get_internal(ptr.tableIndex, page, section, row)) {
-                return DataSetNotFoundError::instance();
-            }
+            ManagedMemoryTableRecord& record = *getRecord(ptr.tableIndex);
+            if (record.uid != ptr.rowuid) return NotFoundError::instance();
             
-            if (!row || row->uid != ptr.rowuid) return DataSetNotFoundError::instance();
-            
-            // Update the row.
-            row->ptr = nullptr;
-            row->uid = 0;
-            
-            // Decrement the section's row counter to allow other calls to find
-            // the now free row in this section.
-            section->numOccupied.fetch_sub(1);
+            record.ptr = nullptr;
+            record.uid = 0;
+            shouldScanGaps = true;
             return NoError::instance();
         }
         
         void* ManagedMemoryTable::get(const ManagedMemoryPointerBase& ptr) const {
-            ManagedMemoryTablePage* page;
-            ManagedMemoryTableSection* section;
-            ManagedMemoryTableRow* row;
-            
-            auto* that = const_cast<ManagedMemoryTable*>(this);
-            
-            if (!that->get_internal(ptr.tableIndex, page, section, row)) {
-                return nullptr;
-            }
-            
-            return reinterpret_cast<uint8*>(row->ptr.load()) + sizeof(ManagedMemoryOverhead);
+			auto& tmp = *getRecord(ptr.tableIndex);
+            ManagedMemoryTableRecord& record = *getRecord(ptr.tableIndex);
+            if (record.uid != ptr.rowuid) return nullptr;
+            return reinterpret_cast<uint8*>(record.ptr) + sizeof(ManagedMemoryOverhead);
         }
         
-        Buffer<ManagedMemoryPointerBase> ManagedMemoryTable::getAllPointers() const {
-            Buffer<ManagedMemoryPointerBase> result;
-            const ManagedMemoryTablePage* page = &firstPage;
+        void ManagedMemoryTable::collect(StandardHashSet<ManagedMemoryPointerBase>& pointers) const {
+            pointers.reserve(countRecordsEstimate());
             
-            uint32 tableIndex = 0;
+            for (auto ptr : *this) {
+                pointers.add(ptr);
+            }
             
-            do {
-                for (uint8 i = 0; i < sizeof(page->sections) / sizeof(ManagedMemoryTableSection); ++i) {
-                    auto& section = page->sections[i];
-                    
-                    for (uint8 j = 0; j < sizeof(section.rows) / sizeof(ManagedMemoryTableRow); ++j) {
-                        ManagedMemoryOverhead* ptr = section.rows[j].ptr.load();
-                        if (ptr) {
-                            ManagedMemoryPointerBase wrapper;
-                            wrapper.tableIndex = tableIndex;
-                            wrapper.rowuid = section.rows[j].uid;
-                            result.add(wrapper);
-                        }
-                        
-                        tableIndex++;
-                    }
-                }
-            } while(page);
-            
-            return result;
+            pointers.shrink();
         }
         
         
         ////////////////////////////////////////////////////////////////////////
-        // Private methods
+        // Management
         
-        void ManagedMemoryTable::findSectionForInsert(ManagedMemoryOverhead* addr, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, uint32& pageIndex, uint32& sectionIndex) {
-            static ManagedMemoryTablePage* cmpptr = nullptr;
+        uint32 ManagedMemoryTable::countRecordsEstimate() const {
+            uint32 max = nextRecordIdx.load();
             
-            // Attempt to find a section in an existing page.
-            ManagedMemoryTablePage* lastPage = page = &firstPage;
-            
-            // Check if first page has any available slot
-            sectionIndex = findSectionForInsert(page, addr);
-            
-            // Check if any other page has any available slot (if needed)
-            while (sectionIndex == npos && page) {
-                page = page->nextPage;
-                sectionIndex = findSectionForInsert(page, addr);
-            } while (sectionIndex == npos && page);
-            
-            // Still not found?! Try to create a new page! But also consider concurrency...
-            while (sectionIndex == npos) {
-                // Precheck: are we really the last page?
-                // There may be a rare case where e.g. two new last pages were added in the meantime, but we still want to try both.
-                if (!lastPage->nextPage) {
-                    page = new ManagedMemoryTablePage();
-                    page->sections[0].numOccupied = 1;
-                    sectionIndex = npos;
-                    section = &page->sections[0];
-                }
-                
-                // Attempt to update the last page.
-                if (!lastPage->nextPage.compare_exchange_strong(cmpptr, page)) {
-                    // Another thread was faster than us.
-                    // Update locally stored last page.
-                    lastPage = lastPage->nextPage;
-                    
-                    // Delete our newly created page again, if precheck was true.
-                    if (page) {
-                        delete page;
-                        page = lastPage;
-                    }
-                    
-                    // Then try to find a section in the existing new page.
-                    sectionIndex = findSectionForInsert(lastPage, addr);
-                }
+            SharedLock lock(gapsSemaphore);
+            for (uint32 gapIdx = 0; gapIdx < numGaps; ++gapIdx) {
+                max = max - (gaps[gapIdx].end - gaps[gapIdx].start.load());
             }
             
-            if (page) {
-                // Return the section by pointer, for convenience.
-                section = &page->sections[sectionIndex];
-            }
-            else {
-                section = nullptr;
-            }
+            return max;
         }
         
-        uint32 ManagedMemoryTable::findSectionForInsert(ManagedMemoryTablePage* page, ManagedMemoryOverhead* newAddr) {
-            for (uint32 sectionIndex = 0; sectionIndex < g_pagesize; ++sectionIndex) {
-                auto& section = page->sections[sectionIndex];
-                uint8 count = section.numOccupied.fetch_add(1);
-                
-                // Undo if more than g_sectsize entries
-                if (count >= g_sectsize) {
-                    section.numOccupied.fetch_sub(1);
-                }
-                
-                // Having already incremented the counter, we basically already
-                // reserved one row for us. Now we just gotta find it.
-                else {
-                    return sectionIndex;
-                }
-            }
-            return npos;
+        void ManagedMemoryTable::findGaps(uint32 minGapSize) {
+            Assert::fail("Not yet implemented");
         }
         
-        bool ManagedMemoryTable::get_internal(uint32 index, ManagedMemoryTablePage*& page, ManagedMemoryTableSection*& section, ManagedMemoryTableRow*& row) {
-            // Find the corresponding table page.
-            page = &firstPage;
+        
+        ////////////////////////////////////////////////////////////////////////
+        // Protected methods
+        
+        void ManagedMemoryTable::decomposeTableIndex(uint32 tableIndex, uint32& pageIndex, uint32& recordIndex) {
+            pageIndex = tableIndex / NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE;
+            recordIndex = tableIndex % NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE;
+        }
+        
+        ManagedMemoryTableRecord* ManagedMemoryTable::getRecord(uint32 tableIndex) const {
+            uint32 pageIndex, recordIndex;
+            decomposeTableIndex(tableIndex, pageIndex, recordIndex);
+            Assert::Value("Page and record indices valid", pages.size() > pageIndex && recordIndex < NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE);
+            auto* that = const_cast<ManagedMemoryTable*>(this);
+            return &that->pages[pageIndex].records[recordIndex];
+        }
+        
+        uint32 ManagedMemoryTable::claimIndex() {
+            // Try to acquire soft lock on gaps semaphore. If unavailable, don't
+            // wait and instead just append to end of table.
+            TrySharedLock lock(gapsSemaphore);
             
-            while (page && index > g_pagesize * g_sectsize) {
-                page = page->nextPage;
-                index -= g_pagesize * g_sectsize;
+            if (lock && gaps) {
+                uint32 index = npos;
+                for (uint32 i = 0; i < numGaps; ++i) {
+                    index = gaps[i].claim();
+                    if (index != npos) return index;
+                }
             }
             
-            if (!page) return false;
-            
-            // Locate the row.
-            uint32 sectionIndex = index / g_sectsize;
-            index %= g_sectsize;
-            
-            if (sectionIndex > g_pagesize) return false;
-            
-            section = &page->sections[sectionIndex];
-            row = &section->rows[index];
-            return true;
+            return nextRecordIdx.fetch_add(1);
         }
     }
 }

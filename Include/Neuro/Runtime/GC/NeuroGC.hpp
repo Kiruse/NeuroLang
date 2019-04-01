@@ -153,6 +153,17 @@ namespace Neuro {
             virtual ManagedMemoryPointerBase allocateNonTrivial(uint32 elementSize, uint32 count, const Delegate<void, void*, const void*>& copyDeleg, const Delegate<void, void*>& destroyDeleg) = 0;
             
             /**
+             * Reallocate the buffer underlying the given pointer such that all
+             * instances of the buffer need not be changed, but the actual buffer
+             * is migrated to another memory region.
+             * 
+             * Since the original buffer should contain all the necessary
+             * information, this method should work with both trivial and
+             * non-trivial buffers.
+             */
+			virtual Error reallocate(ManagedMemoryPointerBase ptr, uint32 size, uint32 count, bool autocopy = true) = 0;
+            
+            /**
              * Roots the given managed object. The implementation may assume
              * that the object is actually managed by this GC.
              */
@@ -203,7 +214,7 @@ namespace Neuro {
         class NEURO_API GC : public GCInterface
         {
         public:    // Types
-            using ScannerDelegate = Delegate<void, Buffer<ManagedMemoryPointerBase>&>;
+            using ScannerDelegate = Delegate<void, StandardHashSet<ManagedMemoryPointerBase>&>;
             
         protected: // Fields
             // TODO: Implement wrappers for std types to ensure library interface consistency.
@@ -216,7 +227,7 @@ namespace Neuro {
             std::atomic_bool terminate;
             std::thread backgroundThread;
             
-            MulticastDelegate<void, Buffer<ManagedMemoryPointerBase>&> scanners;
+            MulticastDelegate<void, StandardHashSet<ManagedMemoryPointerBase>&> scanners;
             
             ManagedMemoryTable dataTable;
             ManagedMemorySegment* firstTrivialMemSeg;
@@ -237,6 +248,8 @@ namespace Neuro {
         public:    // GCInterface
             virtual ManagedMemoryPointerBase allocateTrivial(uint32 size, uint32 count) override;
             virtual ManagedMemoryPointerBase allocateNonTrivial(uint32 size, uint32 count, const Delegate<void, void*, const void*>& copyDeleg, const Delegate<void, void*>& destroyDeleg) override;
+            
+            virtual Error reallocate(ManagedMemoryPointerBase ptr, uint32 size, uint32 count, bool autocopy = true) override;
             
             virtual Error root(Pointer obj) override;
             virtual Error unroot(Pointer obj) override;
@@ -267,13 +280,13 @@ namespace Neuro {
              * 
              * The scanner for our Object type is one such scanner.
              */
-            Error registerMemoryScanner(const Delegate<void, Buffer<ManagedMemoryPointerBase>&>& scanner);
+            Error registerMemoryScanner(const Delegate<void, StandardHashSet<ManagedMemoryPointerBase>&>& scanner);
             
             
         protected: // Life Cycle
             virtual void threadMain();
             virtual uint32 scan();
-            virtual void scanForObjects(Buffer<ManagedMemoryPointerBase>& pointers);
+            virtual void scanForObjects(StandardHashSet<ManagedMemoryPointerBase>& pointers);
             virtual void sweep();
             virtual void sweep(bool trivial);
             virtual void compact();

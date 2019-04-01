@@ -1,11 +1,4 @@
 {
-    "cmake.configureOnOpen": true,
-    "cmake.preferredGenerators": [
-        "Visual Studio 15 2017",
-        "Visual Studio 14 2015",
-        "Ninja",
-        "Unix Makefiles"
-    ],
     "C_Cpp.default.configurationProvider": "vector-of-bool.cmake-tools",
     "C_Cpp.configurationWarnings": "Disabled",
     "files.associations": {
@@ -56,7 +49,13 @@
         "memory": "cpp",
         "chrono": "cpp",
         "ratio": "cpp",
-        "xfunctional": "cpp"
+        "xfunctional": "cpp",
+        "condition_variable": "cpp",
+        "functional": "cpp",
+        "mutex": "cpp",
+        "random": "cpp",
+        "shared_mutex": "cpp",
+        "thread": "cpp"
     },
     "editor.trimAutoWhitespace": false,
     "editor.rulers": [80, 120]

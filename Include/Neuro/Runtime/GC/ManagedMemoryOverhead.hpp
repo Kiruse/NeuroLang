@@ -35,6 +35,11 @@ namespace Neuro {
             uint32 count;
             
             /**
+             * Whether the underlying buffer is to be treated as trivial.
+             */
+            uint32 isTrivial : 1;
+            
+            /**
              * Garbage Collection state this associated managed memory is in.
              */
             uint32 garbageState : 2;

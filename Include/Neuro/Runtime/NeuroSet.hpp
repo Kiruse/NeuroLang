@@ -118,9 +118,10 @@ namespace Neuro
             >
     class NEURO_API StandardHashSet
     {
+    private:   // Properties
         Buffer<BucketT, Allocator> buckets;
         
-    public:
+    public:    // Types
         template<bool Immutable>
         class Iterator {
         public:
@@ -192,7 +193,7 @@ namespace Neuro
         typedef Iterator<false> MutableIterator;
         typedef Iterator<true> ImmutableIterator;
         
-    public:
+    public:    // RAII
         StandardHashSet(uint32 numberOfBuckets = 8) : buckets(numberOfBuckets) {}
         StandardHashSet(const std::initializer_list<T>& init) : buckets(init.size()) {
             for (auto curr : init) {
@@ -227,6 +228,7 @@ namespace Neuro
             clear();
         }
         
+    public:    // Content management methods
         StandardHashSet& add(const T& elem) {
             BucketT& bucket = getOrCreateBucket(Hasher(elem));
 			if (bucket.find(elem) == npos) bucket.add(elem);
@@ -306,6 +308,23 @@ namespace Neuro
             return *this;
         }
         
+        void reserve(uint32 expected) {
+            buckets.fit(buckets.length() + expected);
+        }
+        
+        void clear() {
+            buckets.clear();
+        }
+        
+        /** Shrinks this set to its minimum required size. */
+        void shrink() {
+            buckets.shrink();
+            for (auto bucket : buckets) {
+                bucket.shrink();
+            }
+        }
+        
+    public:    // Selection
         /**
          * Gets any element from the set in no particular order.
          * 
@@ -321,10 +340,6 @@ namespace Neuro
          * the underlying buffer.
          */
         const T& any() const { return *cbegin(); }
-        
-        void clear() {
-            buckets.clear();
-        }
         
         StandardHashSetElementIdentifier find(const T& elem) const {
             hashT hash = Hasher(elem);
@@ -363,14 +378,7 @@ namespace Neuro
             return result;
         }
         
-        /** Shrinks this set to its minimum required size. */
-        void shrink() {
-            buckets.shrink();
-            for (auto bucket : buckets) {
-                bucket.shrink();
-            }
-        }
-        
+    public:    // Iterators
         bool operator==(const StandardHashSet& other) const {
             if (buckets.length() != other.buckets.length()) return false;
             // Buckets are ordered for faster lookup.
@@ -388,6 +396,7 @@ namespace Neuro
         }
         bool operator!=(const StandardHashSet& other) const { return !(*this==other); }
         
+    public:    // Iterators
         MutableIterator begin() {
             MutableIterator result(*this);
             if (!result) ++result;
@@ -403,7 +412,7 @@ namespace Neuro
         ImmutableIterator end() const { return cend(); }
         ImmutableIterator cend() const { return ImmutableIterator(*this, npos, npos); }
         
-    protected:
+    protected: // Methods
         /**
          * Attempts to find the bucket holding elements of the specified hash within the designated range.
          * Returns nullptr if none found, including if the range is empty.

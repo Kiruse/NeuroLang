@@ -195,10 +195,10 @@ namespace Neuro
                 m_doubleValue = other.getDouble();
                 break;
             case NVT_NativeObject:
-                m_objectValue = other.getManagedObject();
+				m_ptrValue = other.getNativeObject();
                 break;
             case NVT_Object:
-                m_ptrValue = other.getNativeObject();
+				m_objectValue = other.getManagedObject();
                 break;
             }
             return *this;

@@ -52,12 +52,12 @@ namespace Neuro {
             initProps();
         }
         
-        Object::Object(Pointer self, Pointer other) : propertyWriteMutex(), self(self), props(getPropertyMapAddress(this)), propCount(other->propCount) {
+        Object::Object(Pointer self, Object* other) : propertyWriteMutex(), self(self), props(getPropertyMapAddress(this)), propCount(other->propCount) {
             copyProps(other);
             onMove(other);
         }
         
-        Object::Object(Pointer self, Pointer other, uint32 newPropCount) : propertyWriteMutex(), self(self), props(getPropertyMapAddress(this)), propCount(newPropCount) {
+        Object::Object(Pointer self, Object* other, uint32 newPropCount) : propertyWriteMutex(), self(self), props(getPropertyMapAddress(this)), propCount(newPropCount) {
             initProps();
             copyRehashProps(other);
             onMove(other);
@@ -80,7 +80,7 @@ namespace Neuro {
         Value& Object::getProperty(Identifier id) {
             Property* prop = getConstProp(id);
             if (prop) return prop->value;
-            decltype(Identifier::number) number = id.getUID();
+            decltype(id.getUID()) number = id.getUID();
             
             std::lock_guard{propertyWriteMutex};
             const uint32 cap = capacity();
@@ -129,11 +129,11 @@ namespace Neuro {
             }
         }
         
-        void Object::copyProps(Pointer other) {
+        void Object::copyProps(Object* other) {
             std::memcpy(props, other->props, propCount * sizeof(Property));
         }
         
-        void Object::copyRehashProps(Pointer other) {
+        void Object::copyRehashProps(Object* other) {
 			const uint32 max = capacity();
             uint32 added = 0;
             for (auto& prop : *other) {
@@ -185,16 +185,18 @@ namespace Neuro {
         Pointer Object::recreateObject(Pointer object, uint32 propsCount, uint32 propsSlack) {
             // TODO: More dynamic algorithm for property map upsizing
             const uint32 totalPropsCount = propsCount + propsSlack;
+			auto oldptr = object.get();
             
             // Only recreate if we're actually resizing!
             if (totalPropsCount == object->propCount) return object;
             
-            auto rawptr = GC::instance()->allocateTrivial(sizeof(Object) + sizeof(Property) * totalPropsCount, 1);
-            if (!rawptr) return Pointer();
+            Error err = GC::instance()->reallocate(object, sizeof(Object) + sizeof(Property) * totalPropsCount, 1, false);
+            if (err) return Pointer();
             
-            Pointer self(rawptr);
-            new (self.get()) Object(self, object, totalPropsCount);
-            return self;
+			auto newptr = object.get();
+            
+            new (object.get()) Object(object, oldptr, totalPropsCount);
+            return object;
         }
     }
 }

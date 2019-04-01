@@ -34,6 +34,7 @@
 // License: GPL 3.0
 #include <chrono>
 #include <utility>
+#include <cstring>
 
 #include "GC/NeuroGC.h"
 #include "GC/NeuroGC.hpp"
@@ -166,6 +167,7 @@ namespace Neuro {
             ManagedMemorySegment* compare = nullptr;
             while (!chain->next.compare_exchange_strong(compare, segment)) {
                 chain = chain->next.load();
+				compare = nullptr;
             }
         }
         
@@ -234,6 +236,7 @@ namespace Neuro {
             
             // Create the overhead & initialize with data
             new (head) ManagedMemoryOverhead(elementSize, count);
+            head->isTrivial = true;
             
             // Return a managed pointer wrapper.
             return dataTable.addPointer(head);
@@ -245,11 +248,37 @@ namespace Neuro {
             
             // Create the overhead & populate with data
             new (head) ManagedMemoryOverhead(elementSize, count);
+            head->isTrivial = false;
             copyDelegate.copyTo(&head->copyDelegate.get());
             destroyDelegate.copyTo(&head->destroyDelegate.get());
             
             // Return a managed pointer wrapper.
             return dataTable.addPointer(head);
+        }
+        
+        Error GC::reallocate(ManagedMemoryPointerBase ptr, uint32 elementSize, uint32 count, bool autocopy) {
+            auto* oldHead = ptr.getHeadPointer();
+            auto* newHead = reinterpret_cast<ManagedMemoryOverhead*>(allocate_inner(oldHead->isTrivial ? firstTrivialMemSeg : firstNonTrivialMemSeg, sizeof(ManagedMemoryOverhead) + elementSize * count));
+            
+            new (newHead) ManagedMemoryOverhead(elementSize, count);
+            newHead->isTrivial = oldHead->isTrivial;
+            if (newHead->isTrivial) {
+                if (autocopy) {
+                    // IMPORTANT: circumstances predict that new buffer cannot intersect with old buffer, hence
+                    // DO NOT use memmove as it comes with a small performance penalty!
+                    std::memcpy(newHead->getBufferPointer(), oldHead->getBufferPointer(), oldHead->elementSize * oldHead->count);
+                }
+            }
+            else {
+                oldHead->copyDelegate.get().copyTo(&newHead->copyDelegate.get());
+                oldHead->destroyDelegate.get().copyTo(&newHead->destroyDelegate.get());
+                
+                if (autocopy) {
+                    newHead->copyDelegate.get()(newHead->getBufferPointer(), oldHead->getBufferPointer());
+                }
+            }
+            
+            return dataTable.replacePointer(ptr, newHead);
         }
         
         
@@ -302,16 +331,13 @@ namespace Neuro {
         ////////////////////////////////////////////////////////////////////////
         
         uint32 GC::scan() {
-            Buffer<ManagedMemoryPointerBase> pointers = dataTable.getAllPointers();
-            scanners(pointers);
-            return pointers.length();
+            StandardHashSet<ManagedMemoryPointerBase> garbage;
+            dataTable.collect(garbage);
+            scanners(garbage);
+            return garbage.count();
         }
         
-        void GC::scanForObjects(Buffer<ManagedMemoryPointerBase>& scans) {
-            // No need to scan if nothing issued to scan.
-            if (!scans.length()) return;
-            
-            // List of objects we need to scan.
+        void GC::scanForObjects(StandardHashSet<ManagedMemoryPointerBase>& scans) {
             Buffer<Pointer> processList;
             
             // Start with scanning roots first.
@@ -323,6 +349,7 @@ namespace Neuro {
             // Set of objects we've already visited. Avoids cyclic references
             // resulting in infinite loops.
             StandardHashSet<Pointer> visited(processList.begin(), processList.end());
+            uint32 numScans = scans.count();
             
             // Iterate through the roots and attempt to find at least one
             // reference to the flagged objects.
@@ -338,7 +365,7 @@ namespace Neuro {
                         scans.remove(other);
                         
                         // If we've found at least one reference to all trace targets, we're done for good.
-                        if (!scans.length()) return;
+                        if (!--numScans) return;
                         
                         // Only process the found object once per phase.
                         if (!visited.contains(other)) {
@@ -438,7 +465,7 @@ namespace Neuro {
         // Low Level API
         ////////////////////////////////////////////////////////////////////////////
         
-        Error GC::registerMemoryScanner(const Delegate<void, Buffer<ManagedMemoryPointerBase>&>& scanner) {
+        Error GC::registerMemoryScanner(const Delegate<void, StandardHashSet<ManagedMemoryPointerBase>&>& scanner) {
             scanners += scanner;
             return NoError::instance();
         }

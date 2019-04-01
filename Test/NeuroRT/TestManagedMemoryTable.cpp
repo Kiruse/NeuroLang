@@ -4,10 +4,11 @@
 ////////////////////////////////////////////////////////////////////////////////
 #include <cstdlib>
 
+#include "Assert.hpp"
 #include "CLInterface.hpp"
+#include "NeuroBuffer.hpp"
 #include "GC/ManagedMemoryTable.hpp"
 #include "GC/NeuroGC.hpp"
-#include "NeuroBuffer.hpp"
 
 using namespace Neuro;
 using namespace Neuro::Runtime;
@@ -54,6 +55,11 @@ public: // GCInterface
         destroyDeleg.copyTo(&head->destroyDelegate.get());
         cursor += head->getTotalBytes();
         return dataTable.addPointer(head);
+    }
+    
+    virtual Error reallocate(ManagedMemoryPointerBase ptr, uint32 size, uint32 count, bool autocopy = true) override {
+        Assert::shouldNotEnter();
+        return GenericError::instance();
     }
     
     virtual Error root(Pointer obj) override {

@@ -127,7 +127,7 @@ namespace Neuro {
             
             
         public:  // Delegates
-            MulticastDelegate<void, Pointer> onMove;
+            MulticastDelegate<void, Object*> onMove;
             MulticastDelegate<void> onDestroy;
             
             
@@ -137,10 +137,10 @@ namespace Neuro {
             Object(Pointer self, uint32 propCount);
             
             // Special move constructor receiving self pointer and pointer to object to copy from.
-            Object(Pointer self, Pointer other);
+            Object(Pointer self, Object* other);
             
             // Special move constructor with different property map size.
-            Object(Pointer self, Pointer other, uint32 newPropCount);
+            Object(Pointer self, Object* other, uint32 newPropCount);
             
             // Objects must receive their self pointer, hence we cannot use copy and move constructors...
             Object(const Object&) = delete;
@@ -251,14 +251,14 @@ namespace Neuro {
              * Simple case of special move construction where the number of
              * properties is the same. Properties are copied over bytewise.
              */
-            void copyProps(Pointer other);
+            void copyProps(Object* other);
             
             /**
              * Copies the properties of the other object whilst rehashing them.
              * Usually conducted during special move construction where the
              * number of properties of both objects differs.
              */
-            void copyRehashProps(Pointer other);
+            void copyRehashProps(Object* other);
             
             /**
              * Only gets an existing property by ID.

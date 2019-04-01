@@ -104,8 +104,8 @@ namespace Neuro {
             return lhs << (StringBuilder() << rhs.value);
         }
         
-        inline void fail() { throw AssertionException(); }
-        inline void fail(const std::string& message) { throw AssertionException(message); }
-        inline void shouldNotEnter() { throw AssertionException("The application took a branch it should have never entered."); }
+        inline void fail() { throw new AssertionException(); }
+        inline void fail(const std::string& message) { throw new AssertionException(message); }
+        inline void shouldNotEnter() { throw new AssertionException("The application took a branch it should have never entered."); }
     }
 }

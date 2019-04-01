@@ -66,10 +66,10 @@ namespace Neuro
         uint32 m_size;
         T* m_data;
         
-    protected:
+    protected: // RAII
         RawHeapAllocator(uint32 size, T* data) : m_size(size), m_data(data) {}
         
-    public:
+    public:    // RAII
         RawHeapAllocator() : m_size(0), m_data(nullptr) {}
         RawHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(alloc(desiredSize)) {}
         RawHeapAllocator(const RawHeapAllocator& other) : m_size(other.m_size), m_data(alloc(other.m_size)) {
@@ -110,6 +110,7 @@ namespace Neuro
             m_size = 0;
         }
         
+    public:    // Methods
         void resize(uint32 desiredSize) {
             // Must not resize non-existent data.
             if (m_data && desiredSize != m_size) {
@@ -156,7 +157,7 @@ namespace Neuro
         T* data() { return m_data; }
         const T* data() const { return m_data; }
         
-    protected:
+    protected: // Static methods
         static T* alloc(uint32 desiredSize) {
             if (!desiredSize) return nullptr;
             return reinterpret_cast<T*>(std::malloc(sizeof(T) * desiredSize));
@@ -175,10 +176,10 @@ namespace Neuro
         uint32 m_size;
         T* m_data;
         
-    protected:
+    protected: // RAII
         RAIIHeapAllocator(uint32 size, T* data) : m_size(size), m_data(data) {}
         
-    public:
+    public:    // RAII
         RAIIHeapAllocator() : m_size(0), m_data(nullptr) {}
         RAIIHeapAllocator(uint32 desiredSize) : m_size(desiredSize), m_data(alloc(desiredSize)) {}
         template<typename U = T, typename = std::enable_if_t<std::is_assignable_v<T, const U&>>>
@@ -214,14 +215,20 @@ namespace Neuro
             m_data = nullptr;
         }
         
+    public:    // Methods
         void resize(uint32 desiredSize) {
             // Must not resize non-existent data.
             if (m_data && desiredSize != m_size) {
                 T* tmp = m_data;
-                m_data = new T[desiredSize];
-                resize_restore(tmp, std::min(desiredSize, m_size));
-                delete[] tmp;
-				m_size = desiredSize;
+                m_data = alloc(desiredSize);
+                if (m_data) {
+                    resize_restore(tmp, std::min(desiredSize, m_size));
+                    m_size = desiredSize;
+                    delete[] tmp;
+                }
+                else {
+                    m_size = 0;
+                }
             }
         }
         
@@ -308,12 +315,7 @@ namespace Neuro
         T* data() { return m_data; }
         const T* data() const { return m_data; }
 
-	protected:
-        static T* alloc(uint32 desiredSize) {
-            if (!desiredSize) return nullptr;
-            return new T[desiredSize];
-        }
-        
+	protected: // Methods
 		// The kewl thing about these fallbacks is it will first try and move,
 		// then try to copy, and finally do nothing if none of those two exist.
 		// That is all thanks to type coercion and function overload resolution.
@@ -330,6 +332,12 @@ namespace Neuro
 			copy(0, oldData, count);
 		}
 		void resize_restore(...) {}
+    
+    protected: // Static methods
+        static T* alloc(uint32 desiredSize) {
+            if (!desiredSize) return nullptr;
+            return new T[desiredSize];
+        }
     };
     
     /**

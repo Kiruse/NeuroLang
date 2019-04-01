@@ -37,6 +37,6 @@ namespace Neuro
     DEFINE_NEURO_ERROR(InvalidState,       6, "Invalid state for the requested operation.")
     DEFINE_NEURO_ERROR(InvalidArgument,    7, "Invalid argument passed.")
     DEFINE_NEURO_ERROR(NullPointer,        8, "Unexpected null pointer encountered.")
-    DEFINE_NEURO_ERROR(DataSetNotFound,    9, "Data set not found.")
+    DEFINE_NEURO_ERROR(NotFound,           9, "Not found.")
     DEFINE_NEURO_ERROR(UncaughtException, 10, "Uncaught exception")
 }

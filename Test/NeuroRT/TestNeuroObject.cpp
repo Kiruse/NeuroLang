@@ -15,20 +15,34 @@
 // -----
 // Copyright (c) Kiruse 2018 Germany
 // License: GPL 3.0
-#include "GC/ManagedMemoryOverhead.hpp"
-#include "GC/NeuroGC.hpp"
+#include "NeuroBuffer.hpp"
 #include "NeuroObject.hpp"
 #include "CLInterface.hpp"
+#include "GC/ManagedMemoryOverhead.hpp"
+#include "GC/NeuroGC.hpp"
 
 #include <cstdlib>
+#include <cstring>
+#include <utility>
 
 using namespace Neuro;
 using namespace Neuro::Runtime;
 
 
+struct FakeGCRecord
+{
+    uint8* addr;
+    hashT hash;
+    
+    FakeGCRecord() = default;
+    FakeGCRecord(uint8* addr, hashT hash) : addr(addr), hash(hash) {}
+};
+
 class FakeGC : public GCInterface
 {
 public: // Fields
+    Buffer<FakeGCRecord> records;
+    
     uint8* mainBuffer;
     uint8* otherBuffer;
     uint32 cursor;
@@ -51,19 +65,73 @@ public: // RAII
     
 public: // GCInterface
     virtual ManagedMemoryPointerBase allocateTrivial(uint32 size, uint32 count) override {
-        auto head = new (mainBuffer + cursor) ManagedMemoryOverhead(size, count);
-        Pointer ptr = makePointer(cursor, 0);
+        uint8* buffer = mainBuffer + cursor;
+        hashT hash = calculateHash(buffer);
+        
+        FakeGCRecord record(buffer, hash);
+        auto* head = new (buffer) ManagedMemoryOverhead(size, count);
+		head->isTrivial = true;
+        
+        Pointer ptr = makePointer(records.length(), hash);
+        records.add(record);
+        
         cursor += size * count;
         return ptr;
     }
     
     virtual ManagedMemoryPointerBase allocateNonTrivial(uint32 size, uint32 count, const Delegate<void, void*, const void*>& copyDeleg, const Delegate<void, void*>& destroyDeleg) override {
-        auto head = new (mainBuffer + cursor) ManagedMemoryOverhead(size, count);
+        uint8* buffer = mainBuffer + cursor;
+        hashT hash = calculateHash(buffer);
+        
+        FakeGCRecord record(buffer, calculateHash(buffer));
+        auto* head = new (buffer) ManagedMemoryOverhead(size, count);
+		head->isTrivial = false;
         copyDeleg.copyTo(&head->copyDelegate.get());
         destroyDeleg.copyTo(&head->destroyDelegate.get());
-        Pointer pointer = makePointer(cursor, 0);
+        
+        Pointer pointer = makePointer(records.length(), hash);
+        records.add(record);
+        
         cursor += size * count;
         return pointer;
+    }
+    
+    virtual Error reallocate(ManagedMemoryPointerBase ptr, uint32 size, uint32 count, bool autocopy = true) {
+        ManagedMemoryOverhead* oldHead = GC::getOverhead(ptr);
+        uint32 tableIndex;
+        hashT hash;
+        extractPointerData(ptr, tableIndex, hash);
+        
+        auto& record = records[tableIndex];
+        if (record.hash != hash) {
+            Assert::shouldNotEnter();
+            return GenericError::instance();
+        }
+        
+        uint8* oldBuffer = record.addr;
+        uint8* newBuffer = mainBuffer + cursor;
+        cursor += size * count;
+        
+        ManagedMemoryOverhead* newHead = new (newBuffer) ManagedMemoryOverhead(size, count);
+        newHead->isTrivial = oldHead->isTrivial;
+        
+        if (oldHead->isTrivial) {
+            std::memset(newBuffer, 0, size * count);
+            if (autocopy) {
+                std::memcpy(newBuffer, oldBuffer, std::min(oldHead->elementSize * oldHead->count, size * count));
+            }
+        }
+        else {
+            oldHead->copyDelegate.get().copyTo(&newHead->copyDelegate.get());
+            oldHead->destroyDelegate.get().copyTo(&newHead->destroyDelegate.get());
+            
+            if (autocopy) {
+                newHead->copyDelegate.get()(newHead->getBufferPointer(), oldHead->getBufferPointer());
+            }
+        }
+        
+        record.addr = newBuffer;
+        return NoError::instance();
     }
     
     virtual Error root(Pointer obj) override {
@@ -80,7 +148,10 @@ public: // GCInterface
         uint32 index;
         hashT hash;
         extractPointerData(pointer, index, hash);
-        return mainBuffer + index + sizeof(ManagedMemoryOverhead);
+        
+        auto& record = records[index];
+        if (record.hash != hash) return nullptr;
+        return record.addr + sizeof(ManagedMemoryOverhead);
     }
     
 public: // Methods

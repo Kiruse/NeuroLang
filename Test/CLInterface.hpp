@@ -101,14 +101,10 @@ namespace Neuro {
                 callback();
             }
             catch (std::exception* ex) {
-                error(ex->what());
+                error(formatException(ex));
             }
             catch (Exception* ex) {
-                String message = (ex->title() + ": " + ex->message()).c_str();
-                if (ex->cause()) {
-                    message += " (and more)";
-                }
-                error(message);
+                error(formatException(ex));
             }
             catch (...) {
                 error("Unknown error");
@@ -119,6 +115,41 @@ namespace Neuro {
         
         void assert(bool truthy, const String& message) {
             if (!truthy) throw new AssertionException(message.c_str());
+        }
+        
+        /**
+         * Wraps the body of a thread in order to catch and properly handle
+         * assertions and catch exceptions properly.
+         */
+		template<typename CALLBACK, typename... ARGS>
+        auto thread(CALLBACK& body, ARGS... args) {
+			return [&body]() {
+				try {
+					body(std::forward<ARGS>(args)...);
+				}
+				catch (std::exception* ex) {
+					error(formatException(ex));
+				}
+				catch (Exception* ex) {
+					error(formatException(ex));
+				}
+				catch (...) {
+					error("Unknown error");
+				}
+			};
+        }
+        
+        
+        String formatException(std::exception* ex) {
+            return ex->what();
+        }
+        
+        String formatException(Exception* ex) {
+            String message = (ex->title() + ": " + ex->message()).c_str();
+            if (ex->cause()) {
+                message += " (and more)";
+            }
+            return message;
         }
     }
 }
