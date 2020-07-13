@@ -68,23 +68,11 @@ namespace Neuro {
              * and reused.
              */
             hashT uid;
-            
-            ManagedMemoryTableRecord() : ptr(nullptr), uid(0) {}
         };
         
         struct ManagedMemoryTablePage
         {
             ManagedMemoryTableRecord records[NEURO_MANAGEDMEMORYTABLE_RECORDS_PER_PAGE];
-            
-            
-            ManagedMemoryTablePage() : records() {}
-            ManagedMemoryTablePage(const ManagedMemoryTablePage& other) : records() {
-                std::memcpy(records, other.records, sizeof(records));
-            }
-            ManagedMemoryTablePage& operator=(const ManagedMemoryTablePage& other) {
-                std::memcpy(records, other.records, sizeof(records));
-            }
-            ~ManagedMemoryTablePage() {}
         };
         
         struct ManagedMemoryTableRange
@@ -117,7 +105,9 @@ namespace Neuro {
             
         public: // RAII
             ManagedMemoryTablePageAllocator() : m_buffer(nullptr), m_size(0) {}
-            ManagedMemoryTablePageAllocator(uint32 desiredSize) : m_buffer(alloc(desiredSize)), m_size(desiredSize) {}
+            ManagedMemoryTablePageAllocator(uint32 desiredSize) : m_buffer(alloc(desiredSize)), m_size(desiredSize) {
+                std::memset(m_buffer, 0, sizeof(ManagedMemoryTablePage) * desiredSize);
+            }
             ManagedMemoryTablePageAllocator(const ManagedMemoryTablePageAllocator& other) : m_buffer(alloc(other.m_size)), m_size(other.m_size) {}
             ManagedMemoryTablePageAllocator(ManagedMemoryTablePageAllocator&& other) : m_buffer(other.m_buffer), m_size(other.m_size) {
                 other.m_buffer = nullptr;
@@ -150,7 +140,9 @@ namespace Neuro {
                     ManagedMemoryTablePage* tmp = m_buffer;
                     m_buffer = alloc(desiredSize);
                     if (m_buffer) {
-                        std::memcpy(m_buffer, tmp, std::min(desiredSize, m_size));
+                        uint32 copysize = std::min(desiredSize, m_size);
+                        std::memset(m_buffer + copysize, 0, std::max(desiredSize, m_size) - copysize);
+                        std::memcpy(m_buffer, tmp, copysize);
                         m_size = desiredSize;
                         delete[] tmp;
                     }

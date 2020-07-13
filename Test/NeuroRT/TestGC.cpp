@@ -24,6 +24,12 @@ using namespace Neuro::Runtime;
 constexpr uint32 ITERATIONS = 100000;
 
 
+void noop() {}
+
+
+Pointer root;
+
+
 Pointer createListObject() {
     Pointer list = Object::createObject(8, 8);
     list->getProperty("length") = (uint32)0;
@@ -83,14 +89,17 @@ Pointer getRandomNeuron(Pointer root) {
 int main(int argc, char** argv)
 {
     GC::init();
-
-	return 0;
     
-    Pointer root = createNeuron();
+    root = createNeuron();
 	Pointer prev = root;
     root->root();
+
+	GCInterface* inst = GC::instance();
     
     for (uint32 i = 0; i < 10000; ++i) {
+		if (i >= 1586) {
+			noop();
+		}
         Pointer neuron = createNeuron();
         //Pointer parent = getRandomNeuron(root);
         link(prev, neuron);

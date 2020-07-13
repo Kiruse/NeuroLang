@@ -146,7 +146,7 @@ namespace Neuro {
         ////////////////////////////////////////////////////////////////////////
         
         ManagedMemorySegment* createSegment(uint32 minSize) {
-            const uint32 size = std::max<uint32>(sizeof(ManagedMemorySegment) + minSize, 2048);
+            const uint32 size = std::max<uint32>(sizeof(ManagedMemorySegment) + minSize, 2 * 1024 * 1024); // At least 2MB
             
             // TODO: Optimize the sizes of the chunks of memory based on recent memory usage!
             void* newMemory = std::malloc(size);
@@ -314,14 +314,13 @@ namespace Neuro {
             // Use of .load() method should make it clear to the compiler to
             // not optimize the loop condition away.
             while (!terminate.load()) {
-                // TODO: Improve upon this barbaric stop-the-world GC algorithm.
-                marks += scan();
-                if (marks) {
-                    sweep();
-                    compact();
-                    marks = 0;
-                }
-                std::this_thread::sleep_for(scanInterval);
+				// std::this_thread::sleep_for(scanInterval);
+                // marks += scan();
+                // if (marks) {
+                //     sweep();
+                //     compact();
+                //     marks = 0;
+                // }
             }
         }
         
@@ -483,8 +482,9 @@ namespace Neuro {
             std::scoped_lock{gcMainInstanceMutex};
             if (gcMainInstance) return InvalidStateError::instance();
             
-            gcMainInstance = new GC();
-            return NoError::instance();
+            auto gc = new GC();
+            gcMainInstance = gc;
+            return gc;
         }
         
         Error GC::init(GCInterface* instance) {

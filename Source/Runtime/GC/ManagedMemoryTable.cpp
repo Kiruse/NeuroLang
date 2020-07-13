@@ -156,7 +156,7 @@ namespace Neuro {
         }
         
         void ManagedMemoryTable::findGaps(uint32 minGapSize) {
-            Assert::fail("Not yet implemented");
+            Assert::notYetImplemented();
         }
         
         
